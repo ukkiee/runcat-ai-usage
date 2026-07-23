@@ -1,0 +1,38 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "design",
+  "verdict": "needs-attention",
+  "summary": "No-ship. R-2 is resolved by recording observed 0–100 scale evidence and preserving the previous Reading when the legacy shape is untrustworthy (lines 101–105). R-3 is resolved by reset carry-forward semantics plus an explicit outage-after-reset test (lines 59, 88–89, 117). R-1 remains open: the shim prevents immediate failure but its removal criterion still does not ensure installed plists have migrated. No separate new critical/high issue was found in the fixes.",
+  "planFile": "docs/reviews/usage-reading/design.md",
+  "planInDiff": true,
+  "reviewedFileCount": 5,
+  "target": "working tree diff",
+  "reviewedSha": "5c166032de1c5a432327ff44e68df252e937797e",
+  "reviewedTree": "6a14ab2498d4f417b44af1769b32b10c1197cde8",
+  "reviewedPlanSha256": "827341acdb5a6fa211c5e9378e0dbe3415dc3e04f98d115200d99c72976a882c",
+  "headMovedDuringReview": false,
+  "planDriftDuringReview": false,
+  "codexStatus": 0,
+  "parseError": null,
+  "findingCount": 1,
+  "planFindingCount": 1,
+  "triage": "review-gate SKILL.md rules govern: render EVERY finding as a full table row, the human decides each row (accept/reject/defer/question — free text), echo back before applying, max 2 rounds, append decisions.md and COMMIT it with this artifact.",
+  "findings": [
+    {
+      "severity": "high",
+      "title": "R-1 still open: one shipped release does not migrate installed plists",
+      "body": "The shim delays the compatibility break but does not complete the transition. Existing launchd plists retain the absolute `runcat-poll.py` path until `install.sh` is rerun; merely shipping or pulling a release containing the shim does not rewrite or reload them. Therefore users who skip reinstalling during that release will break as soon as the next release removes the shim, again leaving their Card silently stale.",
+      "file": "docs/reviews/usage-reading/design.md",
+      "line_start": 75,
+      "line_end": 75,
+      "confidence": 0.99,
+      "recommendation": "Retain the forwarding entry point indefinitely, or define an automatic migration that rewrites and reloads existing plists. Remove the shim only after a verifiable migration condition, not merely after one release has shipped.",
+      "isPlanFinding": true
+    }
+  ],
+  "next_steps": [
+    "Replace the time-based shim-removal rule with a migration-backed or permanent compatibility strategy.",
+    "Re-review only the revised R-1 transition; R-2 and R-3 need not be reopened without new evidence."
+  ]
+}

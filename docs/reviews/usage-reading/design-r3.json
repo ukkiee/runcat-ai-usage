@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "design",
+  "verdict": "approve",
+  "summary": "R-1b is resolved: design.md:71-75 permanently preserves runcat-poll.py as the executable path, moves implementation beside it, explicitly eliminates removal and plist migration, and keeps install.sh unchanged. No new critical or high issues were introduced by this fix.",
+  "planFile": "docs/reviews/usage-reading/design.md",
+  "planInDiff": true,
+  "reviewedFileCount": 6,
+  "target": "working tree diff",
+  "reviewedSha": "5c166032de1c5a432327ff44e68df252e937797e",
+  "reviewedTree": "6a14ab2498d4f417b44af1769b32b10c1197cde8",
+  "reviewedPlanSha256": "477445008b06870e7c67ac193e19a422488465ad489b89f52930be162464f87c",
+  "headMovedDuringReview": false,
+  "planDriftDuringReview": false,
+  "codexStatus": 0,
+  "parseError": null,
+  "findingCount": 0,
+  "planFindingCount": 0,
+  "triage": "Clean verdict: note it in your report and COMMIT this artifact with the next bookkeeping commit.",
+  "findings": [],
+  "next_steps": []
+}
