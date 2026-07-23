@@ -29,12 +29,13 @@ Design (safe / read-mostly):
   unsigned script can't do an ACL-preserving SecItemUpdate the way the signed
   apps do, and a `security -U` write could lock Claude Code out of its own
   credential. So when the Claude token is valid we poll live usage; when it is
-  expired we do NOT refresh — instead we fall back to a local reset-time
-  computation (zeroing any window whose absolute reset epoch has passed) using
-  reset times captured on the last successful poll. Claude Code refreshes its
-  own token whenever you use it, and the next poll goes live again.
+  expired we do NOT refresh — instead we rebuild the Card from the Usage Reading
+  kept on the last successful poll, zeroing any Window whose Reset has passed
+  since. Claude Code refreshes its own token whenever you use it, and the next
+  poll goes live again.
 
-A provider that errors leaves its existing Card untouched (last-good).
+A provider that errors leaves its existing Card untouched (last-good) when there
+is nothing to rebuild from.
 """
 
 from __future__ import annotations
@@ -51,7 +52,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -244,6 +245,109 @@ def plausible_reset(value, now, window_id):
     return moment
 
 
+def carry_forward_resets(reading, stored, now):
+    """A Window whose new Reset did not survive validation keeps the one already
+    persisted under the same identity. Used shares always come from the new
+    response — only Resets are merged.
+
+    Blind replacement would let one transient glitch inside an otherwise good
+    response erase the only state a later outage could have decayed from. Only a
+    Reset still ahead of `now` is carried: one that has already passed says
+    nothing about the next one, and carrying it would decay a share we have only
+    just measured.
+    """
+    if stored is None:
+        return reading
+    kept = {window.id: window.resets_at for window in stored.windows
+            if window.resets_at is not None and window.resets_at > now}
+    windows = tuple(window if window.resets_at is not None
+                    else replace(window, resets_at=kept.get(window.id))
+                    for window in reading.windows)
+    return replace(reading, windows=windows)
+
+
+def decay(reading, now):
+    """The Reading as it stands at `now`, for when we could not replace it.
+
+    A Window whose Reset has passed *since the Reading was captured* is back to
+    zero and carries no Reset at all — we genuinely do not know the next one,
+    because Claude states no window length to extrapolate from. A Window whose
+    Reset had already passed when the Reading was captured is left alone: its used
+    share was measured after that Reset, so zeroing it would underreport usage,
+    which is the one failure worse than showing a stale Card.
+
+    Decaying an already-decayed Reading changes nothing.
+    """
+    windows = tuple(
+        replace(window, used=0.0, resets_at=None)
+        if window.resets_at is not None and reading.captured_at < window.resets_at <= now
+        else window
+        for window in reading.windows
+    )
+    return replace(reading, windows=windows)
+
+
+def reading_as_json(reading):
+    """The Reading as it goes to disk. Every Window is written under its identity
+    and never under its label, so a Reading captured in one interface language is
+    still readable in another."""
+    return {
+        "provider": reading.provider,
+        "plan": reading.plan,
+        "capturedAt": reading.captured_at,
+        "windows": [{"id": window.id, "label": window.label,
+                     "used": window.used, "resetsAt": window.resets_at}
+                    for window in reading.windows],
+    }
+
+
+def reading_from_json(data):
+    """A Reading read back from disk, or None when what is there is not one.
+
+    The obsolete reset-state file is `{label: epoch}` with no `windows` key, so it
+    reads as absent rather than as a Reading with nothing in it. The worst case is
+    a single cycle with no Stale Reading, after which the next successful poll
+    writes the file this reads.
+
+    A persisted Reset is deliberately NOT put back through plausible_reset: it was
+    checked when it was written, and an outage long enough to push it more than a
+    day into the past is exactly the case decay exists for. Re-checking it here
+    would throw away the state recovery runs on.
+    """
+    if not isinstance(data, dict):
+        return None
+    # Typed before it is looked up: an unhashable provider would raise from the
+    # `in`, and a parser that raises is not "treated as absent".
+    provider = data.get("provider")
+    rows = data.get("windows")
+    captured_at = finite_number(data.get("capturedAt"))
+    if not isinstance(provider, str) or provider not in CARD_HEADINGS:
+        return None
+    if not isinstance(rows, list) or captured_at is None:
+        return None
+
+    windows = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        window_id = row.get("id")
+        if not isinstance(window_id, str) or not window_id:
+            continue
+        share = used_share(row.get("used"), window_id)
+        if share is None:
+            continue
+        label = row.get("label")
+        windows.append(Window(id=window_id, used=share,
+                              resets_at=finite_number(row.get("resetsAt")),
+                              label=label if isinstance(label, str) else ""))
+    if not windows:
+        return None
+
+    plan = data.get("plan")
+    return UsageReading(provider=provider, plan=plan if isinstance(plan, str) else "",
+                        windows=tuple(windows), captured_at=captured_at)
+
+
 # ---- Claude constants (from Claude Code / OpenUsage) ----
 CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
@@ -254,7 +358,7 @@ CLAUDE_USAGE_HEADERS = {
     "User-Agent": "claude-code/2.1.69",
 }
 CLAUDE_CARD = HOME / ".claude" / "runcat-usage.json"
-CLAUDE_SIDECAR = HOME / ".claude" / "runcat-reset-state.json"
+CLAUDE_READING = HOME / ".claude" / "runcat-reading.json"
 
 # ---- Codex constants ----
 CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
@@ -280,10 +384,17 @@ def log(msg):
 
 
 def load_json(path):
+    """Whatever is at `path`, or None when it is not JSON we can read.
+
+    ValueError rather than JSONDecodeError: bytes that are not UTF-8 raise
+    UnicodeDecodeError, and every caller here is reading a file it must treat as
+    absent when it cannot be understood — one that raises instead would take the
+    whole poll down with it, on every run, until someone deleted the file.
+    """
     try:
         with Path(path).open(encoding="utf-8") as f:
             return json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return None
 
 
@@ -573,6 +684,24 @@ def claude_reading(body, plan, now):
                         windows=tuple(windows), captured_at=now)
 
 
+def claude_recover(why):
+    """Rebuild the Card from the Stale Reading, for a poll that could not happen.
+
+    The Card is rebuilt from the record rather than patched where it stands. That
+    is what keeps the blank line between Windows: the spacer is a trailing newline
+    smuggled into the previous row's value, and patching the published Card
+    overwrote it for good. It is also why a language change no longer breaks
+    recovery — Windows are matched by identity, not by the row title on screen.
+    """
+    stale = reading_from_json(load_json(CLAUDE_READING))
+    card = render_card(decay(stale, NOW_EPOCH), label_set(), NOW_EPOCH) if stale else None
+    if card is None:
+        log(f"claude: {why} — no Stale Reading to rebuild from, keeping last-good")
+        return
+    write_atomic(CLAUDE_CARD, card)
+    log(f"claude: {why} — Card rebuilt from the Stale Reading")
+
+
 def claude_poll():
     oauth = claude_read_token()
     token = (oauth or {}).get("accessToken") or ""
@@ -580,37 +709,32 @@ def claude_poll():
     token_ok = bool(token) and (not isinstance(expires_at, (int, float)) or expires_at > NOW_MS)
 
     if not token_ok:
-        # Expired / unreadable: never refresh (keychain-write unsafe). Fall back.
-        apply_reset_fallback(CLAUDE_CARD, CLAUDE_SIDECAR)
-        log("claude: token expired/absent — reset-fallback applied")
+        # Expired / unreadable: never refresh (keychain-write unsafe). Recover.
+        claude_recover("token expired/absent")
         return
 
     headers = dict(CLAUDE_USAGE_HEADERS, Authorization=f"Bearer {token.strip()}")
     try:
         status, body = http_get_json(CLAUDE_USAGE_URL, headers)
     except urllib.error.HTTPError as e:
-        apply_reset_fallback(CLAUDE_CARD, CLAUDE_SIDECAR)
-        log(f"claude: usage HTTP {e.code} — reset-fallback applied")
+        claude_recover(f"usage HTTP {e.code}")
         return
     except Exception as e:
-        log(f"claude: usage fetch failed ({e}) — keeping last-good")
+        claude_recover(f"usage fetch failed ({e})")
         return
 
-    reading = claude_reading(body, claude_plan_label(oauth), NOW_EPOCH)
-    labels = label_set()
-    card = render_card(reading, labels, NOW_EPOCH)
+    reading = carry_forward_resets(
+        claude_reading(body, claude_plan_label(oauth), NOW_EPOCH),
+        reading_from_json(load_json(CLAUDE_READING)),
+        NOW_EPOCH,
+    )
+    card = render_card(reading, label_set(), NOW_EPOCH)
     if card is None:
         log("claude: usage response had no windows — keeping last-good")
         return
 
     write_atomic(CLAUDE_CARD, card)
-    # The reset sidecar is still keyed by the rendered row title, because that is
-    # what apply_reset_fallback matches on. Persisting the Reading itself is what
-    # replaces both, and it takes the language-change defect with it.
-    resets = {window_title(window, labels): int(window.resets_at)
-              for window in reading.windows if window.resets_at is not None}
-    if resets:
-        write_atomic(CLAUDE_SIDECAR, resets)
+    write_atomic(CLAUDE_READING, reading_as_json(reading))
     log("claude: live usage written")
 
 

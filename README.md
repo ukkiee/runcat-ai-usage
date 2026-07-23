@@ -67,7 +67,7 @@ To show a value in the menu bar, click the Metrics Bar and toggle the source on.
 ./uninstall.sh
 ```
 
-Removes the `launchd` agent. The `runcat-usage.json` files are left in place — remove the sources in RunCat Neo settings if you want.
+Removes the `launchd` agent and the poller's own state files. The `runcat-usage.json` cards are left in place — remove the sources in RunCat Neo settings if you want.
 
 ## Configuration
 
@@ -87,7 +87,7 @@ Card labels and plan names live at the top of `runcat_poll.py` (the implementati
 
 ## Auth & safety
 
-- **Claude — read-only.** The access token is only *read* from the Keychain; the Keychain is **never written**. An unsigned script can't do an ACL-preserving `SecItemUpdate` the way the signed apps do, and a coarse `security -U` write could lock Claude Code out of its own credential — so this tool refuses to refresh the Claude token. While the token is valid (i.e. you've used Claude recently) it polls live usage; once it expires it stops polling and instead estimates resets locally (zeroing any window whose reset time has passed) until Claude Code refreshes its own token on your next use.
+- **Claude — read-only.** The access token is only *read* from the Keychain; the Keychain is **never written**. An unsigned script can't do an ACL-preserving `SecItemUpdate` the way the signed apps do, and a coarse `security -U` write could lock Claude Code out of its own credential — so this tool refuses to refresh the Claude token. While the token is valid (i.e. you've used Claude recently) it polls live usage; once it expires it stops polling and instead rebuilds the card from the usage reading kept on the last successful poll (`~/.claude/runcat-reading.json`), zeroing any window whose reset time has passed since, until Claude Code refreshes its own token on your next use.
 - **Codex — file-based.** If the `~/.codex/auth.json` token is near expiry it is refreshed via the standard OAuth endpoint and written back to that file (the same mechanism Codex uses). Codex tokens are long-lived, so this is rare.
 - No credentials or tokens are ever printed, stored elsewhere, or sent anywhere except the provider's own usage endpoint.
 
