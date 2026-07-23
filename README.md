@@ -1,5 +1,7 @@
 # runcat-ai-usage
 
+**English** | [한국어](README.ko.md)
+
 Show your **Claude Code** and **Codex** usage — session / weekly / per-model limits with reset countdowns — as a [RunCat Neo](https://github.com/runcat-dev/RunCatNeo) dashboard card and menu-bar meter.
 
 ```
