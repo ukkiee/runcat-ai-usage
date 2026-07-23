@@ -141,7 +141,7 @@ class CodexPollRotationTest(CodexCredentialCase):
         self.patch("jwt_exp", lambda _token: mod.NOW_EPOCH + 1)
         self.patch("codex_refresh", lambda _rt: {"access_token": "new-access", "refresh_token": "new-refresh"})
         self.patch("http_get_json", self.record_fetch)
-        self.patch("apply_reset_fallback", lambda *paths: self.fallbacks.append(paths))
+        self.patch("codex_recover", lambda why: self.fallbacks.append(why))
 
     def record_fetch(self, url, headers, timeout=15):
         self.fetched.append(headers)

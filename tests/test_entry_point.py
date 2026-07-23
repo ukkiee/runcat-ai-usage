@@ -67,9 +67,11 @@ class ImportableImplementationTest(unittest.TestCase):
     def test_implementation_imports_and_works_without_path_machinery(self):
         self.assertTrue(callable(runcat_poll.main))
         # Exercise it, rather than only proving the name resolves.
-        labels = runcat_poll.label_set("en")
-        self.assertEqual(runcat_poll.codex_window_label(604800, labels), "Weekly")
-        self.assertEqual(runcat_poll.codex_window_label(18000, labels), "Session")
+        self.assertEqual(runcat_poll.codex_window_identity(604800),
+                         (runcat_poll.WEEKLY_WINDOW, ""))
+        self.assertEqual(runcat_poll.codex_window_identity(18000),
+                         (runcat_poll.SESSION_WINDOW, ""))
+        self.assertEqual(runcat_poll.label_set("en")["weekly"], "Weekly")
 
     def test_implementation_name_has_no_hyphen(self):
         """A hyphen is what makes the entry point unimportable; the implementation

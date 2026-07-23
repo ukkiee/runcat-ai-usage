@@ -147,6 +147,7 @@ def label_set(lang=None):
 SESSION_WINDOW = "session"
 WEEKLY_WINDOW = "weekly"
 SCOPED_WINDOW_PREFIX = "weekly_scoped:"
+LENGTH_WINDOW_PREFIX = "window_length:"   # + seconds, for a Window we have no name for
 
 # How far from now a Reset may sit and still be believable. The range catches
 # both plausible unit errors: milliseconds land tens of thousands of years out,
@@ -173,10 +174,11 @@ class Window:
     """One rate-limit Window of a Usage Reading.
 
     `id` is what everything matches on and is never a display string, so changing
-    the interface language moves labels only. `label` is what the Provider itself
-    calls the Window, and is set only for Model-Scoped Windows — no label set can
-    know a model's name in advance. `resets_at` is an epoch second or None, and
-    None means no countdown and nothing to decay from.
+    the interface language moves labels only. `label` carries the name for a
+    Window no label set can have an entry for — a Model-Scoped Window's model, or
+    the length of a Window a Provider has introduced since — and is empty for the
+    Session and Weekly Windows every Provider has. `resets_at` is an epoch second
+    or None, and None means no countdown and nothing to decay from.
     """
 
     id: str
@@ -238,6 +240,8 @@ def plausible_reset(value, now, window_id):
     """
     moment = finite_number(value)
     if moment is None:
+        if value is not None:
+            log(f"{window_id}: reset {value!r} is not a number — no countdown")
         return None
     if not (now - RESET_PAST_S <= moment <= now + RESET_FUTURE_S):
         log(f"{window_id}: reset {moment:.0f} is not a plausible moment — discarded")
@@ -366,7 +370,7 @@ CODEX_REFRESH_URL = "https://auth.openai.com/oauth/token"
 CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_AUTH_FILE = HOME / ".codex" / "auth.json"
 CODEX_CARD = HOME / ".codex" / "runcat-usage.json"
-CODEX_SIDECAR = HOME / ".codex" / "runcat-reset-state.json"
+CODEX_READING = HOME / ".codex" / "runcat-reading.json"
 CODEX_ROTATION_LOST = HOME / ".codex" / "runcat-rotation-lost.json"
 
 CODEX_PLAN_LABELS = {
@@ -482,8 +486,8 @@ def window_rows(title, used, resets_at_epoch, labels, now):
 def join_blocks(blocks):
     """Concatenate per-window row groups, inserting a blank line between groups.
     RunCat has no spacer row, so we append a trailing newline to the previous
-    group's last value — this renders as an empty line above the next window
-    while keeping window titles clean (so reset-fallback matching still works)."""
+    group's last value — the spacing rides on a row's value, never on its title,
+    and rendering a Card is the only thing that knows that."""
     metrics = []
     for i, rows in enumerate(blocks):
         if i > 0 and metrics:
@@ -548,32 +552,40 @@ def render_card(reading, labels, now):
     )
 
 
-def apply_reset_fallback(card_path, sidecar_path):
-    """When we can't poll: zero any window whose captured reset epoch has passed
-    (and blank its 'reset in' sub-row). Rewrites only if something changed."""
-    card = load_json(card_path)
-    resets = load_json(sidecar_path)
-    if not isinstance(card, dict) or not isinstance(resets, dict):
+def recover_card(provider, why, card_path, reading_path):
+    """Rebuild a Provider's Card from its Stale Reading, for a poll that could not
+    happen.
+
+    The Card is rebuilt from the record rather than patched where it stands. That
+    is what keeps the blank line between Windows: the spacer is a trailing newline
+    smuggled into the previous row's value, and patching the published Card
+    overwrote it for good. It is also why a language change no longer breaks
+    recovery — Windows are matched by identity, never by the row title on screen.
+    """
+    stale = reading_from_json(load_json(reading_path))
+    card = render_card(decay(stale, NOW_EPOCH), label_set(), NOW_EPOCH) if stale else None
+    if card is None:
+        log(f"{provider}: {why} — no Stale Reading to rebuild from, keeping last-good")
         return
-    metrics = card.get("metrics", [])
-    changed = False
-    for i, metric in enumerate(metrics):
-        if not isinstance(metric, dict):
-            continue
-        resets_at = resets.get(metric.get("title"))
-        if not isinstance(resets_at, (int, float)) or NOW_EPOCH < resets_at:
-            continue
-        if metric.get("normalizedValue") == 0:
-            continue  # already reset
-        metric["formattedValue"] = "0%"
-        metric["normalizedValue"] = 0
-        changed = True
-        nxt = metrics[i + 1] if i + 1 < len(metrics) else None
-        if isinstance(nxt, dict) and "normalizedValue" not in nxt and nxt.get("formattedValue") != "—":
-            nxt["formattedValue"] = "—"
-    if changed:
-        card["lastUpdatedDate"] = NOW_ISO
-        write_atomic(card_path, card)
+    write_atomic(card_path, card)
+    log(f"{provider}: {why} — Card rebuilt from the Stale Reading")
+
+
+def publish(provider, why, card_path, reading_path, reading):
+    """Publish a Provider's Card and keep the Reading it came from.
+
+    The Reset a Window arrives without is taken from the one already persisted
+    under the same identity, so one transient glitch inside an otherwise good
+    response cannot erase the only state a later outage could decay from.
+    """
+    reading = carry_forward_resets(reading, reading_from_json(load_json(reading_path)), NOW_EPOCH)
+    card = render_card(reading, label_set(), NOW_EPOCH)
+    if card is None:
+        log(f"{provider}: {why} had no windows — keeping last-good")
+        return
+    write_atomic(card_path, card)
+    write_atomic(reading_path, reading_as_json(reading))
+    log(f"{provider}: live usage written")
 
 
 # ----------------------------- Claude -----------------------------
@@ -685,21 +697,7 @@ def claude_reading(body, plan, now):
 
 
 def claude_recover(why):
-    """Rebuild the Card from the Stale Reading, for a poll that could not happen.
-
-    The Card is rebuilt from the record rather than patched where it stands. That
-    is what keeps the blank line between Windows: the spacer is a trailing newline
-    smuggled into the previous row's value, and patching the published Card
-    overwrote it for good. It is also why a language change no longer breaks
-    recovery — Windows are matched by identity, not by the row title on screen.
-    """
-    stale = reading_from_json(load_json(CLAUDE_READING))
-    card = render_card(decay(stale, NOW_EPOCH), label_set(), NOW_EPOCH) if stale else None
-    if card is None:
-        log(f"claude: {why} — no Stale Reading to rebuild from, keeping last-good")
-        return
-    write_atomic(CLAUDE_CARD, card)
-    log(f"claude: {why} — Card rebuilt from the Stale Reading")
+    return recover_card("claude", why, CLAUDE_CARD, CLAUDE_READING)
 
 
 def claude_poll():
@@ -723,19 +721,8 @@ def claude_poll():
         claude_recover(f"usage fetch failed ({e})")
         return
 
-    reading = carry_forward_resets(
-        claude_reading(body, claude_plan_label(oauth), NOW_EPOCH),
-        reading_from_json(load_json(CLAUDE_READING)),
-        NOW_EPOCH,
-    )
-    card = render_card(reading, label_set(), NOW_EPOCH)
-    if card is None:
-        log("claude: usage response had no windows — keeping last-good")
-        return
-
-    write_atomic(CLAUDE_CARD, card)
-    write_atomic(CLAUDE_READING, reading_as_json(reading))
-    log("claude: live usage written")
+    publish("claude", "usage response", CLAUDE_CARD, CLAUDE_READING,
+            claude_reading(body, claude_plan_label(oauth), NOW_EPOCH))
 
 
 # ----------------------------- Codex -----------------------------
@@ -755,20 +742,56 @@ def codex_plan_label(plan_type):
     return CODEX_PLAN_LABELS.get(plan_type.lower(), plan_type.replace("_", " ").title())
 
 
-def codex_window_label(seconds, labels):
-    """Codex states a Window by its length, so the identity comes from the length
-    and the display string from the label set."""
-    window_id = WINDOW_IDS.get(seconds)
-    if window_id:
-        return labels[window_id]
-    if not isinstance(seconds, (int, float)):
-        return None
-    seconds = int(seconds)
+def codex_window_identity(seconds):
+    """A Codex Window's identity and, when it is one no label set can name, the
+    label to show it under. Both come from the Window's length — nothing that
+    appears on screen is ever part of an identity.
+
+    Returns (None, "") for a length we cannot read at all: a Window we cannot
+    identify is left out rather than merged into whatever else has no identity.
+    """
+    length = finite_number(seconds)
+    if length is None:
+        return None, ""
+    length = int(length)
+    known = WINDOW_IDS.get(length)
+    if known:
+        return known, ""
+    return f"{LENGTH_WINDOW_PREFIX}{length}", compact_length(length)
+
+
+def compact_length(seconds):
+    """A Window's length in its largest whole unit: 5d, 3h, 20m."""
     if seconds % 86400 == 0:
         return f"{seconds // 86400}d"
     if seconds % 3600 == 0:
         return f"{seconds // 3600}h"
     return f"{seconds // 60}m"
+
+
+def codex_reading(body, plan, now):
+    """Codex's usage response as a Usage Reading.
+
+    Its Reset is a bare epoch from an undocumented endpoint — the response even
+    carries the same moment in relative form beside it — so it goes through the
+    same validation Claude's does rather than being written down unchallenged.
+    """
+    windows = []
+    rate_limit = body.get("rate_limit") or {}
+    for section in ("primary_window", "secondary_window"):
+        window = rate_limit.get(section)
+        if not isinstance(window, dict):
+            continue
+        window_id, label = codex_window_identity(window.get("limit_window_seconds"))
+        if window_id is None:
+            continue
+        share = used_share(window.get("used_percent"), window_id)
+        if share is None:
+            continue
+        windows.append(Window(id=window_id, used=share, label=label,
+                              resets_at=plausible_reset(window.get("reset_at"), now, window_id)))
+    return UsageReading(provider="codex", plan=plan,
+                        windows=tuple(windows), captured_at=now)
 
 
 def codex_refresh(refresh_token):
@@ -863,6 +886,10 @@ def codex_rotation_still_lost(refresh_token):
     return False
 
 
+def codex_recover(why):
+    return recover_card("codex", why, CODEX_CARD, CODEX_READING)
+
+
 def codex_poll():
     auth = load_json(CODEX_AUTH_FILE)
     tokens = (auth or {}).get("tokens") or {}
@@ -870,13 +897,16 @@ def codex_poll():
     account_id = tokens.get("account_id")
     refresh_token = tokens.get("refresh_token")
     if not access:
-        log("codex: no access token — skipping")
+        # The same situation as Claude's expired token: we cannot read usage, so
+        # the Card decays from what we last knew rather than standing frozen at a
+        # share that may have reset hours ago.
+        codex_recover("no access token")
         return
 
     if codex_rotation_still_lost(refresh_token):
         log("codex: an earlier rotation was lost and the stored credential is still the "
             "invalidated one — run `codex login` to recover")
-        apply_reset_fallback(CODEX_CARD, CODEX_SIDECAR)
+        codex_recover("the stored credential is invalid")
         return
 
     exp = jwt_exp(access)
@@ -908,7 +938,7 @@ def codex_poll():
                 codex_record_rotation_loss(refresh_token)
                 log(f"codex: token rotated but NOT saved ({e}) — the credential on disk "
                     "is now invalid; run `codex login` to recover")
-                apply_reset_fallback(CODEX_CARD, CODEX_SIDECAR)
+                codex_recover("the rotated credential could not be saved")
                 return
             else:
                 access = new_access
@@ -920,44 +950,14 @@ def codex_poll():
     try:
         status, body = http_get_json(CODEX_USAGE_URL, headers)
     except urllib.error.HTTPError as e:
-        apply_reset_fallback(CODEX_CARD, CODEX_SIDECAR)
-        log(f"codex: usage HTTP {e.code} — reset-fallback applied")
+        codex_recover(f"usage HTTP {e.code}")
         return
     except Exception as e:
-        log(f"codex: usage fetch failed ({e}) — keeping last-good")
+        codex_recover(f"usage fetch failed ({e})")
         return
 
-    title = card_title("codex", codex_plan_label(body.get("plan_type")))
-    labels = label_set()
-    blocks, resets = [], {}
-    session_pct = weekly_pct = None
-    rate_limit = body.get("rate_limit") or {}
-    for window in (rate_limit.get("primary_window"), rate_limit.get("secondary_window")):
-        if not isinstance(window, dict):
-            continue
-        secs = window.get("limit_window_seconds")
-        used = window.get("used_percent")
-        if secs == 18000:
-            session_pct = used
-        elif secs == 604800:
-            weekly_pct = used
-        row = codex_window_label(secs, labels)
-        reset_at = window.get("reset_at")
-        rows = window_rows(row, used, reset_at, labels, NOW_EPOCH) if row else []
-        if rows:
-            blocks.append(rows)
-            if isinstance(reset_at, (int, float)):
-                resets[row] = int(reset_at)
-    metrics = join_blocks(blocks)
-    if not metrics:
-        log("codex: usage response had no windows — keeping last-good")
-        return
-
-    write_atomic(CODEX_CARD, finalize(title, CARD_HEADINGS["codex"]["symbol"], metrics,
-                                      bar_two(session_pct, weekly_pct), NOW_EPOCH))
-    if resets:
-        write_atomic(CODEX_SIDECAR, resets)
-    log("codex: live usage written")
+    publish("codex", "usage response", CODEX_CARD, CODEX_READING,
+            codex_reading(body, codex_plan_label(body.get("plan_type")), NOW_EPOCH))
 
 
 # ----------------------------- main -----------------------------

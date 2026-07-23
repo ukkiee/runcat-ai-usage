@@ -13,6 +13,7 @@ rm -f "$PLIST"
 # are what RunCat Neo is pointed at, so removing them is the user's call.
 rm -f "$HOME/.claude/runcat-reading.json" \
       "$HOME/.claude/runcat-reset-state.json" \
+      "$HOME/.codex/runcat-reading.json" \
       "$HOME/.codex/runcat-reset-state.json" \
       "$HOME/.codex/runcat-rotation-lost.json"
 
