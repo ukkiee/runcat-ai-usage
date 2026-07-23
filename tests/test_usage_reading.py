@@ -235,6 +235,89 @@ class BoundaryValidationTest(ReadingCase):
         self.assertEqual([row["title"] for row in card["metrics"]], ["현재 세션"])
 
 
+class LegacyResponseTest(ReadingCase):
+    """The older top-level fields are the only safety net if the undocumented
+    `limits[]` shape disappears, so they must not be exercised for the first time
+    on the day that happens."""
+
+    def legacy_only(self, **overrides):
+        body = {key: value for key, value in LIVE_RESPONSE.items() if key != "limits"}
+        for field, section in overrides.items():
+            body[field] = {**body[field], **section}
+        return body
+
+    def test_the_older_fields_produce_the_reading_the_primary_shape_would_have(self):
+        legacy = self.reading(self.legacy_only())
+
+        self.assertEqual(legacy.windows, self.reading().windows[:2])
+
+    def test_the_older_fields_are_read_only_when_the_primary_shape_is_absent(self):
+        """Both arrive together today, and `limits[]` is the one that carries the
+        Model-Scoped Windows."""
+        both = self.reading(LIVE_RESPONSE)
+
+        self.assertEqual([w.id for w in both.windows],
+                         ["session", "weekly", "weekly_scoped:Fable"])
+
+    def test_a_share_that_cannot_be_a_percentage_publishes_nothing(self):
+        """`utilization` is read on the same 0–100 scale as `percent`, on the
+        evidence of a live response carrying both for the same Window. A value
+        outside that range says the evidence no longer holds — and clamping it
+        would state a number we have no reason to believe, at the exact moment the
+        safety net is first being used."""
+        for impossible in (140.0, -3.0):
+            with self.subTest(utilization=impossible):
+                body = self.legacy_only(five_hour={"utilization": impossible})
+
+                self.assertIsNone(self.reading(body))
+
+    def test_the_scale_it_could_not_reconcile_is_named_out_loud(self):
+        """Either Window's share can be the one that contradicts the scale, and
+        either one stops the whole response being published."""
+        self.assertIsNone(self.reading(self.legacy_only(seven_day={"utilization": 140.0})))
+
+        self.assertIn("seven_day", self.log_text)
+        self.assertIn("140", self.log_text)
+
+    def test_the_ends_of_the_scale_are_readings_like_any_other(self):
+        """0 and 100 are the two most consequential values this path can carry — a
+        Window just reset, and a limit fully burned. Both are on the scale, not
+        contradictions of it, and refusing to publish at 100% would blank the
+        number at the exact moment it matters most."""
+        for utilization in (0.0, 100.0):
+            with self.subTest(utilization=utilization):
+                reading = self.reading(self.legacy_only(five_hour={"utilization": utilization}))
+
+                self.assertIsNotNone(reading, "a share at the edge of the scale is still one")
+                self.assertEqual(reading.windows[0].used, utilization)
+
+    def test_a_share_of_zero_point_seven_five_is_read_as_a_percentage(self):
+        """Range checking cannot establish scale: a fraction meaning 75% sits
+        inside 0–100 untouched. This pins what the mapping does with it rather
+        than pretending the check would catch it."""
+        body = self.legacy_only(five_hour={"utilization": 0.75})
+
+        self.assertEqual(self.reading(body).windows[0].used, 0.75)
+
+    def test_a_window_the_older_fields_do_not_carry_is_simply_absent(self):
+        body = self.legacy_only()
+        body.pop("seven_day")
+
+        self.assertEqual([w.id for w in self.reading(body).windows], ["session"])
+
+    def test_a_share_that_is_not_a_number_leaves_that_window_out(self):
+        body = self.legacy_only(five_hour={"utilization": "lots"})
+
+        self.assertEqual([w.id for w in self.reading(body).windows], ["weekly"])
+
+    def test_the_older_fields_carry_the_same_reset_validation(self):
+        body = self.legacy_only(five_hour={"resets_at": "3026-07-23T10:20:00Z"})
+
+        session = self.reading(body).windows[0]
+        self.assertEqual(session.used, 47.0)
+        self.assertIsNone(session.resets_at)
+
+
 class ClaudeCardTest(ReadingCase):
     def render(self, lang="ko", body=None, now=NOW):
         return mod.render_card(self.reading(body, now=now), mod.label_set(lang), now)

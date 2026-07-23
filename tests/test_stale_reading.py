@@ -290,6 +290,39 @@ class CarryForwardTest(StaleReadingCase):
         self.assertIsNone(self.stored()["windows"][0]["resetsAt"])
 
 
+class LegacyShapeTest(StaleReadingCase):
+    """What the poller does when the primary response shape is gone."""
+
+    def legacy(self, utilization=47.0):
+        """The older top-level fields, with no `limits[]` at all."""
+        return {
+            "five_hour": {"utilization": utilization, "resets_at": "2026-07-23T10:20:00Z"},
+            "seven_day": {"utilization": 77.0, "resets_at": "2026-07-26T19:00:00Z"},
+        }
+
+    def test_the_card_keeps_working_when_the_primary_shape_disappears(self):
+        self.poll(self.legacy())
+
+        self.assertEqual(self.rows(), [
+            ("현재 세션", "47%"),
+            ("재설정", "2시간 2분 후\n"),
+            ("주간 한도", "77%"),
+            ("재설정", "3일 10시간 후"),
+        ])
+
+    def test_a_share_that_contradicts_the_scale_leaves_the_previous_reading_standing(self):
+        """Silently underreporting usage at the very moment the safety net is
+        first used is worse than showing a stale Card."""
+        self.poll()
+        published, kept = self.card(), self.stored()
+
+        self.poll(self.legacy(utilization=140.0))
+
+        self.assertEqual(self.card(), published)
+        self.assertEqual(self.stored(), kept)
+        self.assertIn("nothing is published", self.log_text)
+
+
 class RecoveryTest(StaleReadingCase):
     def test_a_successful_poll_persists_the_reading_beside_the_card(self):
         self.poll()

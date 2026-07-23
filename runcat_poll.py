@@ -672,26 +672,49 @@ def claude_limit_windows(limits, now):
 
 def claude_legacy_windows(body, now):
     """The older top-level Windows, for a response that no longer carries
-    `limits[]`. `utilization` shares the 0–100 scale of `percent`: a live response
-    carried `five_hour.utilization = 18.0` beside `limits[].percent = 18` for the
-    same Window."""
+    `limits[]`. Returns None when the response cannot be reconciled with the scale
+    this mapping stands on.
+
+    `utilization` is read on the same 0–100 scale as `percent`, on one piece of
+    evidence: a live response observed while this was designed carried
+    `five_hour.utilization = 18.0` beside `limits[].percent = 18` for the same
+    Window. That observation is the whole basis, and it is the first thing to
+    re-check if this path ever starts producing surprising numbers.
+
+    Range checking cannot establish that scale, only contradict it. A fraction of
+    `0.75` meaning 75% sits inside 0–100 untouched and would render as 0.75% — no
+    clamp can tell that a number is on the wrong scale. What a value outside
+    0–100 does tell us is that the evidence no longer holds, and clamping it into
+    range would state a number we have no reason to believe. So nothing is
+    published and the previous Reading stands: silently underreporting usage at
+    the very moment this safety net is first used is worse than a stale Card.
+    """
     windows = []
     for field, window_id in (("five_hour", SESSION_WINDOW), ("seven_day", WEEKLY_WINDOW)):
         section = body.get(field)
         if not isinstance(section, dict):
             continue
-        window = claude_window(window_id, "", section.get("utilization"),
-                               section.get("resets_at"), now)
-        if window is not None:
-            windows.append(window)
+        share = finite_number(section.get("utilization"))
+        if share is None:
+            continue
+        if not 0.0 <= share <= 100.0:
+            log(f"claude: legacy {field}.utilization is {share:g}, which cannot be a "
+                "percentage — the older fields are no longer on the scale this mapping "
+                "reads them as, so nothing is published and the last Card stands")
+            return None
+        windows.append(Window(id=window_id, used=share,
+                              resets_at=claude_reset(section.get("resets_at"), now, window_id)))
     return windows
 
 
 def claude_reading(body, plan, now):
-    """Claude's usage response as a Usage Reading."""
+    """Claude's usage response as a Usage Reading, or None when the response
+    cannot be trusted enough to publish anything from."""
     limits = body.get("limits")
     windows = (claude_limit_windows(limits, now) if isinstance(limits, list) and limits
                else claude_legacy_windows(body, now))
+    if windows is None:
+        return None
     return UsageReading(provider="claude", plan=plan,
                         windows=tuple(windows), captured_at=now)
 
@@ -721,8 +744,10 @@ def claude_poll():
         claude_recover(f"usage fetch failed ({e})")
         return
 
-    publish("claude", "usage response", CLAUDE_CARD, CLAUDE_READING,
-            claude_reading(body, claude_plan_label(oauth), NOW_EPOCH))
+    reading = claude_reading(body, claude_plan_label(oauth), NOW_EPOCH)
+    if reading is None:
+        return  # the mapper has already said what it could not reconcile
+    publish("claude", "usage response", CLAUDE_CARD, CLAUDE_READING, reading)
 
 
 # ----------------------------- Codex -----------------------------
