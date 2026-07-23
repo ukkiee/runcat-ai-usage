@@ -80,7 +80,7 @@ Environment variables (set them in the `launchd` plist that `install.sh` writes,
 
 Card labels and plan names live at the top of `runcat_poll.py` (the implementation beside the entry point):
 
-- `STRINGS` — the `session` / `weekly` / `reset` row labels per language.
+- `STRINGS` — every display string per language: the `session` / `weekly` / `reset` row labels and the countdown wording. It holds no window identities, so translating a card changes labels only.
 - `CODEX_PLAN_LABELS` — maps Codex `plan_type` to a display name (e.g. `prolite → "Pro 5x"`, `pro → "Pro 20x"`).
 - Claude's plan (`Max 20x`, …) is derived automatically from its rate-limit tier.
 - The per-model weekly cap uses the model's own name (e.g. `Fable`), so it follows whatever model your plan currently scopes.

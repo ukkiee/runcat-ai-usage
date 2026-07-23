@@ -80,7 +80,7 @@ cd runcat-ai-usage
 
 카드 라벨과 플랜 이름은 `runcat_poll.py`(진입점 옆의 구현 파일) 상단에 있습니다:
 
-- `STRINGS` — 언어별 `session` / `weekly` / `reset` 행 라벨
+- `STRINGS` — 언어별 표시 문자열 전체: `session` / `weekly` / `reset` 행 라벨과 카운트다운 표현. 창(window) 식별자는 들어 있지 않으므로, 언어를 바꿔도 라벨만 바뀝니다
 - `CODEX_PLAN_LABELS` — Codex `plan_type`을 표시명으로 매핑 (예: `prolite → "Pro 5x"`, `pro → "Pro 20x"`)
 - Claude의 플랜(`Max 20x` 등)은 rate-limit 티어에서 자동으로 유도됩니다
 - 모델별 주간 한도는 해당 모델 이름(예: `Fable`)을 그대로 사용하므로, 플랜이 스코프하는 모델이 바뀌면 자동으로 따라갑니다

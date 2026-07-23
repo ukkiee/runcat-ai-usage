@@ -7,14 +7,19 @@ exactly what keeping one fixed entry point prevents.
 
 Reads the OAuth credentials already on this machine and calls each provider's
 dedicated usage endpoint (a plain metadata GET — no model inference, no token
-cost) to write real, account-wide rate-limit numbers into the RunCat Neo
-snapshots. Designed to run on a launchd interval (every ~5 min).
+cost) to write real, account-wide rate-limit numbers into the RunCat Neo Cards.
+Designed to run on a launchd interval (every ~5 min).
 
 Card shape:
 - title carries the plan, e.g. "Claude Code Max 20x" / "Codex Pro Lite".
 - each rate-limit window is two rows: the used% (with the bar) and, underneath
   it, a bar-less "reset in <time>" line so the countdown isn't cramped next to
   the percentage. Windows are "Session" (5h) and "Weekly" (7d).
+
+Claude's response becomes a Usage Reading first — every Window with a stable
+identity, a bounded used share and a Reset we can believe — and the Card is
+rendered from that Reading with the clock and the label set handed in. What the
+user sees is downstream of data rather than being the only place it exists.
 
 Design (safe / read-mostly):
 - Codex tokens live in ~/.codex/auth.json (a plain file). We may refresh an
@@ -29,12 +34,16 @@ Design (safe / read-mostly):
   reset times captured on the last successful poll. Claude Code refreshes its
   own token whenever you use it, and the next poll goes live again.
 
-A provider that errors leaves its existing snapshot untouched (last-good).
+A provider that errors leaves its existing Card untouched (last-good).
 """
 
+from __future__ import annotations
+
 import base64
+import functools
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -42,16 +51,21 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+ISO_SECONDS = "%Y-%m-%dT%H:%M:%SZ"
 
 HOME = Path.home()
 NOW = datetime.now(timezone.utc)
 NOW_EPOCH = NOW.timestamp()
 NOW_MS = NOW_EPOCH * 1000
-NOW_ISO = NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
+NOW_ISO = NOW.strftime(ISO_SECONDS)
 REFRESH_BUFFER_S = 5 * 60  # refresh (Codex) / treat-expired margin
 
+
+# ------------------------- interface language -------------------------
 
 def detect_lang():
     """'ko' or 'en'. RUNCAT_LANG overrides; otherwise the macOS UI language."""
@@ -75,13 +89,160 @@ def detect_lang():
     return "en"
 
 
-LANG = detect_lang()
+# Every display string a Card can carry, per language. Window identities are
+# never in here — they are a closed vocabulary of their own, so translating a
+# Card moves labels only.
 STRINGS = {
-    "ko": {"session": "현재 세션", "weekly": "주간 한도", "reset": "재설정"},
-    "en": {"session": "Session", "weekly": "Weekly", "reset": "reset"},
+    "ko": {
+        "session": "현재 세션",
+        "weekly": "주간 한도",
+        "reset": "재설정",
+        "days": "{days}일 {hours}시간",
+        "hours": "{hours}시간 {minutes}분",
+        "minutes": "{minutes}분",
+        "moment": "1분 미만",
+        "countdown": "{duration} 후",
+    },
+    "en": {
+        "session": "Session",
+        "weekly": "Weekly",
+        "reset": "reset",
+        "days": "{days}d {hours}h",
+        "hours": "{hours}h {minutes}m",
+        "minutes": "{minutes}m",
+        "moment": "<1m",
+        "countdown": "{duration}",
+    },
 }
-T = STRINGS[LANG]
-RESET_ROW_TITLE = T["reset"]  # bar-less sub-row under each window
+
+
+@functools.lru_cache(maxsize=1)
+def interface_lang():
+    """The language this run renders in.
+
+    Cached because it cannot change inside a single run and one run renders a
+    Card per Provider: detect_lang() shells out to `defaults`, and asking it once
+    per Card would spend a subprocess on an answer we already have.
+    """
+    return detect_lang()
+
+
+def label_set(lang=None):
+    """The display strings for one interface language.
+
+    The language is resolved when a Card is rendered, never at import: a module
+    that shells out on the way in makes every consumer pay for it and leaves the
+    language impossible to vary.
+    """
+    return STRINGS.get(lang or interface_lang(), STRINGS["en"])
+
+
+# ---------------------------- Usage Reading ----------------------------
+#
+# A provider-neutral record of every Window for one Provider at one moment.
+# Everything the user sees is derived from it, so it is also where bad values
+# have to be stopped.
+
+SESSION_WINDOW = "session"
+WEEKLY_WINDOW = "weekly"
+SCOPED_WINDOW_PREFIX = "weekly_scoped:"
+
+# How far from now a Reset may sit and still be believable. The range catches
+# both plausible unit errors: milliseconds land tens of thousands of years out,
+# and a relative offset mistaken for a moment lands in 1970.
+RESET_PAST_S = 86400            # a day behind, so a just-passed Reset survives
+RESET_FUTURE_S = 30 * 86400     # four times the widest Window anyone publishes
+
+
+def scoped_window_id(model):
+    """The identity of a Model-Scoped Window.
+
+    The model's name is part of the identity even though the Provider controls
+    it: `scope.model.id` is null in the live response, so the display name is the
+    only handle there is. A rename costs one poll cycle without a fallback for
+    that Window; dropping the qualifier would collide two simultaneous
+    Model-Scoped Windows into one identity and merge two different limits for
+    good. Collision is the worse failure.
+    """
+    return SCOPED_WINDOW_PREFIX + model
+
+
+@dataclass(frozen=True)
+class Window:
+    """One rate-limit Window of a Usage Reading.
+
+    `id` is what everything matches on and is never a display string, so changing
+    the interface language moves labels only. `label` is what the Provider itself
+    calls the Window, and is set only for Model-Scoped Windows — no label set can
+    know a model's name in advance. `resets_at` is an epoch second or None, and
+    None means no countdown and nothing to decay from.
+    """
+
+    id: str
+    used: float
+    resets_at: float | None = None
+    label: str = ""
+
+
+@dataclass(frozen=True)
+class UsageReading:
+    """Every Window of one Provider at one moment, plus what it takes to title the
+    Card. Frozen because a Reading is a record: recovery re-renders it rather than
+    patching what was already published."""
+
+    provider: str
+    plan: str
+    windows: tuple[Window, ...]
+    captured_at: float
+
+
+def finite_number(value):
+    """`value` as a float when it really is a number, else None.
+
+    Guards bool (an int in Python) and the NaN / Infinity that `json` accepts but
+    that no share or moment can be.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        value = float(value)
+    except OverflowError:
+        return None
+    return value if math.isfinite(value) else None
+
+
+def used_share(value, window_id):
+    """A Window's used share as a percentage bounded to 0–100, or None when the
+    Provider sent something that is not a number.
+
+    An out-of-range value is clamped *and* logged. Clamping silently would hide a
+    Provider changing scale under us, and the clamp itself cannot catch that: it
+    bounds a value, it cannot tell that a number is on the wrong scale.
+    """
+    share = finite_number(value)
+    if share is None:
+        return None
+    bounded = min(100.0, max(0.0, share))
+    if bounded != share:
+        log(f"{window_id}: used share {share:g} is outside 0–100 — clamped to {bounded:g}")
+    return bounded
+
+
+def plausible_reset(value, now, window_id):
+    """A Reset we can believe, in epoch seconds, or None.
+
+    The Reading is the trusted artifact, so a moment that cannot be one is dropped
+    rather than persisted: a single bad value would otherwise render every Window
+    at 0% while the user is actually near their limit.
+    """
+    moment = finite_number(value)
+    if moment is None:
+        return None
+    if not (now - RESET_PAST_S <= moment <= now + RESET_FUTURE_S):
+        log(f"{window_id}: reset {moment:.0f} is not a plausible moment — discarded")
+        return None
+    return moment
+
 
 # ---- Claude constants (from Claude Code / OpenUsage) ----
 CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
@@ -92,7 +253,7 @@ CLAUDE_USAGE_HEADERS = {
     "anthropic-beta": "oauth-2025-04-20",
     "User-Agent": "claude-code/2.1.69",
 }
-CLAUDE_SNAPSHOT = HOME / ".claude" / "runcat-usage.json"
+CLAUDE_CARD = HOME / ".claude" / "runcat-usage.json"
 CLAUDE_SIDECAR = HOME / ".claude" / "runcat-reset-state.json"
 
 # ---- Codex constants ----
@@ -100,7 +261,7 @@ CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 CODEX_REFRESH_URL = "https://auth.openai.com/oauth/token"
 CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_AUTH_FILE = HOME / ".codex" / "auth.json"
-CODEX_SNAPSHOT = HOME / ".codex" / "runcat-usage.json"
+CODEX_CARD = HOME / ".codex" / "runcat-usage.json"
 CODEX_SIDECAR = HOME / ".codex" / "runcat-reset-state.json"
 CODEX_ROTATION_LOST = HOME / ".codex" / "runcat-rotation-lost.json"
 
@@ -108,8 +269,8 @@ CODEX_PLAN_LABELS = {
     "free": "Free", "plus": "Plus", "pro": "Pro 20x", "prolite": "Pro 5x",
     "team": "Team", "business": "Business", "enterprise": "Enterprise",
 }
-# window length (seconds) -> row label
-WINDOW_LABELS = {18000: T["session"], 604800: T["weekly"]}
+# window length (seconds) -> Window identity
+WINDOW_IDS = {18000: SESSION_WINDOW, 604800: WEEKLY_WINDOW}
 
 
 # ----------------------------- helpers -----------------------------
@@ -148,41 +309,6 @@ def http_get_json(url, headers, timeout=15):
         return r.status, json.load(r)
 
 
-def fmt_duration(seconds):
-    """Compact 'time left' in the active language: 4일 15시간 / 4d 15h etc."""
-    seconds = max(0, int(seconds))
-    days, rem = divmod(seconds, 86400)
-    hours, rem = divmod(rem, 3600)
-    minutes = rem // 60
-    if LANG == "ko":
-        if days:
-            return f"{days}일 {hours}시간"
-        if hours:
-            return f"{hours}시간 {minutes}분"
-        if minutes:
-            return f"{minutes}분"
-        return "1분 미만"
-    if days:
-        return f"{days}d {hours}h"
-    if hours:
-        return f"{hours}h {minutes}m"
-    if minutes:
-        return f"{minutes}m"
-    return "<1m"
-
-
-def window_rows(title, used, resets_at_epoch):
-    """A window's used% row (with bar) plus a bar-less 'reset in <time>' row."""
-    if not isinstance(used, (int, float)):
-        return []
-    v = max(0.0, min(float(used), 100.0))
-    rows = [{"title": title, "formattedValue": f"{v:g}%", "normalizedValue": round(v / 100, 4)}]
-    if isinstance(resets_at_epoch, (int, float)) and resets_at_epoch - NOW_EPOCH > 0:
-        dur = fmt_duration(resets_at_epoch - NOW_EPOCH)
-        rows.append({"title": RESET_ROW_TITLE, "formattedValue": f"{dur} 후" if LANG == "ko" else dur})
-    return rows
-
-
 def iso_to_epoch(s):
     if not isinstance(s, str):
         return None
@@ -190,6 +316,56 @@ def iso_to_epoch(s):
         return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
+
+
+def epoch_to_iso(epoch):
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime(ISO_SECONDS)
+
+
+# ------------------------------- Card -------------------------------
+
+CARD_HEADINGS = {
+    "claude": {"name": "Claude Code", "symbol": "staroflife"},
+    "codex": {"name": "Codex", "symbol": "camera.aperture"},
+}
+
+
+def fmt_duration(seconds, labels):
+    """Compact 'time left' in the Card's language: 4일 15시간 / 4d 15h etc."""
+    seconds = max(0, int(seconds))
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+    if days:
+        return labels["days"].format(days=days, hours=hours)
+    if hours:
+        return labels["hours"].format(hours=hours, minutes=minutes)
+    if minutes:
+        return labels["minutes"].format(minutes=minutes)
+    return labels["moment"]
+
+
+def window_title(window, labels):
+    """What the Card calls a Window: the label set names the ones every Provider
+    has, and a Model-Scoped Window carries the model's own name instead."""
+    return labels.get(window.id) or window.label or window.id
+
+
+def window_rows(title, used, resets_at_epoch, labels, now):
+    """A window's used% row (with bar) plus a bar-less 'reset in <time>' row.
+
+    A Reset that has already passed gets no countdown at all: we genuinely do not
+    know the next one, because Claude states no window length to extrapolate from.
+    """
+    if not isinstance(used, (int, float)):
+        return []
+    v = max(0.0, min(float(used), 100.0))
+    rows = [{"title": title, "formattedValue": f"{v:g}%", "normalizedValue": round(v / 100, 4)}]
+    if isinstance(resets_at_epoch, (int, float)) and resets_at_epoch - now > 0:
+        dur = fmt_duration(resets_at_epoch - now, labels)
+        rows.append({"title": labels["reset"],
+                     "formattedValue": labels["countdown"].format(duration=dur)})
+    return rows
 
 
 def join_blocks(blocks):
@@ -214,27 +390,61 @@ def bar_two(*pcts):
     return " · ".join(parts) if parts else None
 
 
-def finalize(title, symbol, metrics, bar_value=None):
-    """Build a snapshot. bar_value = menu-bar text; if omitted, falls back to the
-    single most-used window percentage."""
+def card_title(provider, plan):
+    """'Claude Code' plus the Plan, e.g. 'Claude Code Max 20x'."""
+    return (CARD_HEADINGS[provider]["name"] + " " + plan).strip()
+
+
+def finalize(title, symbol, metrics, bar_value, now):
+    """Assemble a Card. bar_value = menu-bar text; None falls back to the single
+    most-used window percentage."""
     rows = [m for m in metrics if m is not None]
     if bar_value is None:
         bar = max((m["normalizedValue"] for m in rows if "normalizedValue" in m), default=None)
         bar_value = f"{bar * 100:g}%" if bar is not None else None
-    snap = {"title": title, "symbol": symbol, "metrics": rows, "lastUpdatedDate": NOW_ISO}
+    card = {"title": title, "symbol": symbol, "metrics": rows, "lastUpdatedDate": epoch_to_iso(now)}
     if bar_value is not None:
-        snap["metricsBarValue"] = bar_value
-    return snap
+        card["metricsBarValue"] = bar_value
+    return card
 
 
-def apply_reset_fallback(snapshot_path, sidecar_path):
+def render_card(reading, labels, now):
+    """A Usage Reading as the Card RunCat Neo reads.
+
+    The clock and the label set are handed in, so the same Reading renders the
+    same Card whatever the interface language is and whenever it is asked for —
+    which is what lets a recovered Reading be re-rendered instead of a published
+    Card being patched in place. Returns None when there is nothing to publish,
+    leaving the last-good Card standing.
+    """
+    blocks = []
+    for window in reading.windows:
+        rows = window_rows(window_title(window, labels), window.used, window.resets_at, labels, now)
+        if rows:
+            # A Window that renders nothing must not reach join_blocks: it would
+            # still take the spacer, hanging a blank line off the Card's last row.
+            blocks.append(rows)
+    metrics = join_blocks(blocks)
+    if not metrics:
+        return None
+    shares = {window.id: window.used for window in reading.windows}
+    return finalize(
+        card_title(reading.provider, reading.plan),
+        CARD_HEADINGS[reading.provider]["symbol"],
+        metrics,
+        bar_two(shares.get(SESSION_WINDOW), shares.get(WEEKLY_WINDOW)),
+        now,
+    )
+
+
+def apply_reset_fallback(card_path, sidecar_path):
     """When we can't poll: zero any window whose captured reset epoch has passed
     (and blank its 'reset in' sub-row). Rewrites only if something changed."""
-    snapshot = load_json(snapshot_path)
+    card = load_json(card_path)
     resets = load_json(sidecar_path)
-    if not isinstance(snapshot, dict) or not isinstance(resets, dict):
+    if not isinstance(card, dict) or not isinstance(resets, dict):
         return
-    metrics = snapshot.get("metrics", [])
+    metrics = card.get("metrics", [])
     changed = False
     for i, metric in enumerate(metrics):
         if not isinstance(metric, dict):
@@ -251,8 +461,8 @@ def apply_reset_fallback(snapshot_path, sidecar_path):
         if isinstance(nxt, dict) and "normalizedValue" not in nxt and nxt.get("formattedValue") != "—":
             nxt["formattedValue"] = "—"
     if changed:
-        snapshot["lastUpdatedDate"] = NOW_ISO
-        write_atomic(snapshot_path, snapshot)
+        card["lastUpdatedDate"] = NOW_ISO
+        write_atomic(card_path, card)
 
 
 # ----------------------------- Claude -----------------------------
@@ -291,6 +501,78 @@ def claude_read_token():
         return None
 
 
+# Claude states a Window's kind; these are the two every account has.
+CLAUDE_WINDOW_IDS = {"session": SESSION_WINDOW, "weekly_all": WEEKLY_WINDOW}
+
+
+def claude_reset(value, now, window_id):
+    """Claude states a Reset as an ISO-8601 moment."""
+    moment = iso_to_epoch(value)
+    if moment is None and value is not None:
+        log(f"{window_id}: reset {value!r} is not a moment we can read — no countdown")
+    return plausible_reset(moment, now, window_id)
+
+
+def claude_window(window_id, label, percent, resets_at, now):
+    """One Window of a Claude Reading, or None when its used share is unusable —
+    a Window we cannot state a number for is worse than one that is absent."""
+    share = used_share(percent, window_id)
+    if share is None:
+        return None
+    return Window(id=window_id, used=share, label=label,
+                  resets_at=claude_reset(resets_at, now, window_id))
+
+
+def claude_limit_windows(limits, now):
+    """`limits[]` uniformly carries the Session, Weekly and per-model
+    Model-Scoped Windows. A kind we don't know is left out rather than guessed
+    at: an identity invented here would not survive the next release."""
+    windows = []
+    for limit in limits:
+        if not isinstance(limit, dict):
+            continue
+        label = ""
+        if limit.get("kind") == "weekly_scoped":
+            model = ((limit.get("scope") or {}).get("model") or {}).get("display_name")
+            label = model if isinstance(model, str) else ""
+            window_id = scoped_window_id(label) if label else None
+        else:
+            window_id = CLAUDE_WINDOW_IDS.get(limit.get("kind"))
+        if not window_id:
+            continue
+        window = claude_window(window_id, label, limit.get("percent"),
+                               limit.get("resets_at"), now)
+        if window is not None:
+            windows.append(window)
+    return windows
+
+
+def claude_legacy_windows(body, now):
+    """The older top-level Windows, for a response that no longer carries
+    `limits[]`. `utilization` shares the 0–100 scale of `percent`: a live response
+    carried `five_hour.utilization = 18.0` beside `limits[].percent = 18` for the
+    same Window."""
+    windows = []
+    for field, window_id in (("five_hour", SESSION_WINDOW), ("seven_day", WEEKLY_WINDOW)):
+        section = body.get(field)
+        if not isinstance(section, dict):
+            continue
+        window = claude_window(window_id, "", section.get("utilization"),
+                               section.get("resets_at"), now)
+        if window is not None:
+            windows.append(window)
+    return windows
+
+
+def claude_reading(body, plan, now):
+    """Claude's usage response as a Usage Reading."""
+    limits = body.get("limits")
+    windows = (claude_limit_windows(limits, now) if isinstance(limits, list) and limits
+               else claude_legacy_windows(body, now))
+    return UsageReading(provider="claude", plan=plan,
+                        windows=tuple(windows), captured_at=now)
+
+
 def claude_poll():
     oauth = claude_read_token()
     token = (oauth or {}).get("accessToken") or ""
@@ -299,7 +581,7 @@ def claude_poll():
 
     if not token_ok:
         # Expired / unreadable: never refresh (keychain-write unsafe). Fall back.
-        apply_reset_fallback(CLAUDE_SNAPSHOT, CLAUDE_SIDECAR)
+        apply_reset_fallback(CLAUDE_CARD, CLAUDE_SIDECAR)
         log("claude: token expired/absent — reset-fallback applied")
         return
 
@@ -307,56 +589,26 @@ def claude_poll():
     try:
         status, body = http_get_json(CLAUDE_USAGE_URL, headers)
     except urllib.error.HTTPError as e:
-        apply_reset_fallback(CLAUDE_SNAPSHOT, CLAUDE_SIDECAR)
+        apply_reset_fallback(CLAUDE_CARD, CLAUDE_SIDECAR)
         log(f"claude: usage HTTP {e.code} — reset-fallback applied")
         return
     except Exception as e:
         log(f"claude: usage fetch failed ({e}) — keeping last-good")
         return
 
-    title = ("Claude Code " + claude_plan_label(oauth)).strip()
-    blocks, resets = [], {}
-
-    def add(label, used, reset_iso):
-        ep = iso_to_epoch(reset_iso)
-        rows = window_rows(label, used, ep)
-        if rows:
-            blocks.append(rows)
-            if ep is not None:
-                resets[label] = int(ep)
-
-    # `limits[]` uniformly carries session, weekly, and per-model weekly-scoped
-    # caps (e.g. Fable); fall back to the top-level windows if it's absent.
-    session_pct = weekly_pct = None
-    limits = body.get("limits")
-    if isinstance(limits, list) and limits:
-        kind_labels = {"session": T["session"], "weekly_all": T["weekly"]}
-        for lim in limits:
-            if not isinstance(lim, dict):
-                continue
-            kind = lim.get("kind")
-            if kind == "weekly_scoped":
-                label = (((lim.get("scope") or {}).get("model") or {}).get("display_name"))
-            else:
-                label = kind_labels.get(kind)
-            if kind == "session":
-                session_pct = lim.get("percent")
-            elif kind == "weekly_all":
-                weekly_pct = lim.get("percent")
-            if label:
-                add(label, lim.get("percent"), lim.get("resets_at"))
-    else:
-        s, w = body.get("five_hour") or {}, body.get("seven_day") or {}
-        session_pct, weekly_pct = s.get("utilization"), w.get("utilization")
-        add(T["session"], s.get("utilization"), s.get("resets_at"))
-        add(T["weekly"], w.get("utilization"), w.get("resets_at"))
-
-    metrics = join_blocks(blocks)
-    if not metrics:
+    reading = claude_reading(body, claude_plan_label(oauth), NOW_EPOCH)
+    labels = label_set()
+    card = render_card(reading, labels, NOW_EPOCH)
+    if card is None:
         log("claude: usage response had no windows — keeping last-good")
         return
 
-    write_atomic(CLAUDE_SNAPSHOT, finalize(title, "staroflife", metrics, bar_two(session_pct, weekly_pct)))
+    write_atomic(CLAUDE_CARD, card)
+    # The reset sidecar is still keyed by the rendered row title, because that is
+    # what apply_reset_fallback matches on. Persisting the Reading itself is what
+    # replaces both, and it takes the language-change defect with it.
+    resets = {window_title(window, labels): int(window.resets_at)
+              for window in reading.windows if window.resets_at is not None}
     if resets:
         write_atomic(CLAUDE_SIDECAR, resets)
     log("claude: live usage written")
@@ -379,9 +631,12 @@ def codex_plan_label(plan_type):
     return CODEX_PLAN_LABELS.get(plan_type.lower(), plan_type.replace("_", " ").title())
 
 
-def codex_window_label(seconds):
-    if seconds in WINDOW_LABELS:
-        return WINDOW_LABELS[seconds]
+def codex_window_label(seconds, labels):
+    """Codex states a Window by its length, so the identity comes from the length
+    and the display string from the label set."""
+    window_id = WINDOW_IDS.get(seconds)
+    if window_id:
+        return labels[window_id]
     if not isinstance(seconds, (int, float)):
         return None
     seconds = int(seconds)
@@ -497,7 +752,7 @@ def codex_poll():
     if codex_rotation_still_lost(refresh_token):
         log("codex: an earlier rotation was lost and the stored credential is still the "
             "invalidated one — run `codex login` to recover")
-        apply_reset_fallback(CODEX_SNAPSHOT, CODEX_SIDECAR)
+        apply_reset_fallback(CODEX_CARD, CODEX_SIDECAR)
         return
 
     exp = jwt_exp(access)
@@ -529,7 +784,7 @@ def codex_poll():
                 codex_record_rotation_loss(refresh_token)
                 log(f"codex: token rotated but NOT saved ({e}) — the credential on disk "
                     "is now invalid; run `codex login` to recover")
-                apply_reset_fallback(CODEX_SNAPSHOT, CODEX_SIDECAR)
+                apply_reset_fallback(CODEX_CARD, CODEX_SIDECAR)
                 return
             else:
                 access = new_access
@@ -541,14 +796,15 @@ def codex_poll():
     try:
         status, body = http_get_json(CODEX_USAGE_URL, headers)
     except urllib.error.HTTPError as e:
-        apply_reset_fallback(CODEX_SNAPSHOT, CODEX_SIDECAR)
+        apply_reset_fallback(CODEX_CARD, CODEX_SIDECAR)
         log(f"codex: usage HTTP {e.code} — reset-fallback applied")
         return
     except Exception as e:
         log(f"codex: usage fetch failed ({e}) — keeping last-good")
         return
 
-    title = ("Codex " + codex_plan_label(body.get("plan_type"))).strip()
+    title = card_title("codex", codex_plan_label(body.get("plan_type")))
+    labels = label_set()
     blocks, resets = [], {}
     session_pct = weekly_pct = None
     rate_limit = body.get("rate_limit") or {}
@@ -561,9 +817,9 @@ def codex_poll():
             session_pct = used
         elif secs == 604800:
             weekly_pct = used
-        row = codex_window_label(secs)
+        row = codex_window_label(secs, labels)
         reset_at = window.get("reset_at")
-        rows = window_rows(row, used, reset_at) if row else []
+        rows = window_rows(row, used, reset_at, labels, NOW_EPOCH) if row else []
         if rows:
             blocks.append(rows)
             if isinstance(reset_at, (int, float)):
@@ -573,7 +829,8 @@ def codex_poll():
         log("codex: usage response had no windows — keeping last-good")
         return
 
-    write_atomic(CODEX_SNAPSHOT, finalize(title, "camera.aperture", metrics, bar_two(session_pct, weekly_pct)))
+    write_atomic(CODEX_CARD, finalize(title, CARD_HEADINGS["codex"]["symbol"], metrics,
+                                      bar_two(session_pct, weekly_pct), NOW_EPOCH))
     if resets:
         write_atomic(CODEX_SIDECAR, resets)
     log("codex: live usage written")
