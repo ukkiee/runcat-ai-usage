@@ -29,6 +29,7 @@ A provider that errors leaves its existing snapshot untouched (last-good).
 """
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -97,6 +98,7 @@ CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_AUTH_FILE = HOME / ".codex" / "auth.json"
 CODEX_SNAPSHOT = HOME / ".codex" / "runcat-usage.json"
 CODEX_SIDECAR = HOME / ".codex" / "runcat-reset-state.json"
+CODEX_ROTATION_LOST = HOME / ".codex" / "runcat-rotation-lost.json"
 
 CODEX_PLAN_LABELS = {
     "free": "Free", "plus": "Plus", "pro": "Pro 20x", "prolite": "Pro 5x",
@@ -400,18 +402,82 @@ def codex_refresh(refresh_token):
         return json.load(r)
 
 
-def codex_write_back(new_access, new_refresh):
-    """Update ~/.codex/auth.json in place, preserving structure. Re-reads first so
-    we don't clobber a token Codex itself just rotated."""
+class CodexPersistError(Exception):
+    """A rotated Codex credential could not be written back to auth.json."""
+
+
+class CodexConcurrentRotation(CodexPersistError):
+    """Codex rotated the credential itself while our refresh was in flight, so the
+    file already holds a newer, live token that must not be overwritten. Nothing is
+    broken in this case — it is the one persist failure that needs no user action."""
+
+
+def token_fingerprint(token):
+    """A stable, non-reversible handle for a credential, so we can tell whether the
+    stored one has changed without writing a second copy of the secret to disk."""
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def codex_persist_rotation(expected_refresh, new_access, new_refresh):
+    """Record a rotated Codex credential in ~/.codex/auth.json, preserving every
+    other field in the file.
+
+    Raises rather than failing quietly. By the time this runs the server has already
+    rotated the refresh token, so the copy still on disk is dead: swallowing a
+    failure here logs the user out of Codex with nothing to connect it to.
+
+    Re-reads first and refuses to write when the stored refresh token is no longer
+    `expected_refresh` — that means Codex rotated the credential itself while our
+    request was in flight, and its newer token, not ours, is what the file should
+    keep. That case raises `CodexConcurrentRotation` so callers can tell it apart
+    from a genuine loss; everything else raises `CodexPersistError`."""
     cur = load_json(CODEX_AUTH_FILE)
     if not isinstance(cur, dict):
-        return
+        raise CodexPersistError(f"{CODEX_AUTH_FILE} is missing or unreadable as JSON")
+
+    stored_refresh = (cur.get("tokens") or {}).get("refresh_token")
+    if stored_refresh != expected_refresh:
+        raise CodexConcurrentRotation("auth.json already holds a newer credential")
+
     tokens = cur.setdefault("tokens", {})
     tokens["access_token"] = new_access
     if new_refresh:
         tokens["refresh_token"] = new_refresh
     cur["last_refresh"] = NOW.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    write_atomic(CODEX_AUTH_FILE, cur)
+    try:
+        write_atomic(CODEX_AUTH_FILE, cur)
+    except Exception as error:
+        raise CodexPersistError(f"could not write {CODEX_AUTH_FILE}: {error}") from error
+
+
+def codex_record_rotation_loss(refresh_token):
+    """Remember that this credential was spent without its replacement being saved,
+    so later runs keep saying so instead of decaying into a generic refresh error.
+    Stores only a fingerprint, never the token."""
+    try:
+        write_atomic(CODEX_ROTATION_LOST, {
+            "consumedRefreshSha256": token_fingerprint(refresh_token),
+            "at": NOW_ISO,
+        })
+    except Exception as error:
+        log(f"codex: could not record the lost rotation ({error})")
+
+
+def codex_rotation_still_lost(refresh_token):
+    """True when an earlier run burned a rotation it could not save and the stored
+    credential is still that dead one. Clears the marker as soon as the credential
+    changes, so `codex login` is the whole recovery procedure."""
+    marker = load_json(CODEX_ROTATION_LOST)
+    if not isinstance(marker, dict):
+        return False
+    if marker.get("consumedRefreshSha256") == token_fingerprint(refresh_token):
+        return True
+    try:
+        CODEX_ROTATION_LOST.unlink()
+    except OSError:
+        pass
+    log("codex: credential changed since the lost rotation — clearing the marker")
+    return False
 
 
 def codex_poll():
@@ -424,19 +490,46 @@ def codex_poll():
         log("codex: no access token — skipping")
         return
 
+    if codex_rotation_still_lost(refresh_token):
+        log("codex: an earlier rotation was lost and the stored credential is still the "
+            "invalidated one — run `codex login` to recover")
+        apply_reset_fallback(CODEX_SNAPSHOT, CODEX_SIDECAR)
+        return
+
     exp = jwt_exp(access)
     if isinstance(exp, (int, float)) and exp - NOW_EPOCH <= REFRESH_BUFFER_S and refresh_token:
+        refreshed = None
         try:
             refreshed = codex_refresh(refresh_token)
-            new_access = refreshed.get("access_token")
-            if new_access:
-                access = new_access
-                codex_write_back(new_access, refreshed.get("refresh_token"))
-                log("codex: token refreshed")
         except urllib.error.HTTPError as e:
             log(f"codex: refresh HTTP {e.code} — trying existing token")
         except Exception as e:
             log(f"codex: refresh failed ({e}) — trying existing token")
+        if refreshed is not None and not isinstance(refreshed, dict):
+            log("codex: refresh returned an unexpected shape — trying existing token")
+            refreshed = None
+
+        new_access = (refreshed or {}).get("access_token")
+        if new_access:
+            # The server has rotated the credential by now, so the copy on disk is
+            # spent. Everything below hangs on recording that.
+            try:
+                codex_persist_rotation(refresh_token, new_access, refreshed.get("refresh_token"))
+            except CodexConcurrentRotation:
+                # Codex refreshed at the same moment and what it wrote is the live
+                # credential. Nothing is broken — pick that up and carry on.
+                stored = (load_json(CODEX_AUTH_FILE) or {}).get("tokens") or {}
+                access = stored.get("access_token") or access
+                log("codex: credential was rotated by Codex mid-refresh — using the stored token")
+            except CodexPersistError as e:
+                codex_record_rotation_loss(refresh_token)
+                log(f"codex: token rotated but NOT saved ({e}) — the credential on disk "
+                    "is now invalid; run `codex login` to recover")
+                apply_reset_fallback(CODEX_SNAPSHOT, CODEX_SIDECAR)
+                return
+            else:
+                access = new_access
+                log("codex: token refreshed")
 
     headers = {"Authorization": f"Bearer {access}"}
     if account_id:
