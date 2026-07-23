@@ -23,7 +23,7 @@ Labels auto-switch between English and Korean based on your macOS language (see 
 
 ## How it works
 
-RunCat Neo can render any local JSON file as a custom-metrics card. This project ships one small Python script (`runcat-poll.py`) that a `launchd` agent runs every 5 minutes. Each run it:
+RunCat Neo can render any local JSON file as a custom-metrics card. This project ships a small Python poller that a `launchd` agent runs every 5 minutes via `runcat-poll.py`. Each run it:
 
 1. Reuses the OAuth credentials **already on your machine** (no separate login):
    - **Claude** — read from the login Keychain (`Claude Code-credentials`) via Apple's signed `security` CLI.
@@ -78,7 +78,7 @@ Environment variables (set them in the `launchd` plist that `install.sh` writes,
 | `RUNCAT_LANG` | auto (macOS UI language) | `ko` or `en` to force the card language. |
 | `RUNCAT_POLL_INTERVAL` | `300` | Poll interval in seconds (install-time only). |
 
-Card labels and plan names live at the top of `runcat-poll.py`:
+Card labels and plan names live at the top of `runcat_poll.py` (the implementation beside the entry point):
 
 - `STRINGS` — the `session` / `weekly` / `reset` row labels per language.
 - `CODEX_PLAN_LABELS` — maps Codex `plan_type` to a display name (e.g. `prolite → "Pro 5x"`, `pro → "Pro 20x"`).

@@ -5,24 +5,12 @@ the copy on disk is dead. Failing quietly there logs the user out of Codex with
 no clue why — these tests pin the behaviour that prevents it.
 """
 
-import importlib.util
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-MODULE_PATH = REPO / "runcat-poll.py"
-
-
-def load_module():
-    spec = importlib.util.spec_from_file_location("runcat_poll_under_test", MODULE_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-mod = load_module()
+import runcat_poll as mod  # the tests package puts the repo root on sys.path
 
 
 AUTH = {

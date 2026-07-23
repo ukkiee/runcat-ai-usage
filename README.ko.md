@@ -23,7 +23,7 @@ Claude Code Max 20x            메뉴바: 45% · 45%
 
 ## 동작 원리
 
-RunCat Neo는 로컬 JSON 파일을 커스텀 메트릭 카드로 렌더링할 수 있습니다. 이 프로젝트는 작은 파이썬 스크립트(`runcat-poll.py`) 하나를 `launchd` 에이전트가 5분마다 실행합니다. 실행할 때마다:
+RunCat Neo는 로컬 JSON 파일을 커스텀 메트릭 카드로 렌더링할 수 있습니다. 이 프로젝트는 작은 파이썬 폴러를 담고 있고, `launchd` 에이전트가 `runcat-poll.py`를 통해 5분마다 실행합니다. 실행할 때마다:
 
 1. **이미 이 맥에 있는 OAuth 자격증명을 재사용**합니다(별도 로그인 불필요):
    - **Claude** — 로그인 키체인(`Claude Code-credentials`)에서 Apple 서명된 `security` CLI로 읽음
@@ -78,7 +78,7 @@ cd runcat-ai-usage
 | `RUNCAT_LANG` | 자동 (macOS 시스템 언어) | `ko` 또는 `en`으로 카드 언어 강제 지정 |
 | `RUNCAT_POLL_INTERVAL` | `300` | 폴링 주기(초). 설치 시점에만 적용 |
 
-카드 라벨과 플랜 이름은 `runcat-poll.py` 상단에 있습니다:
+카드 라벨과 플랜 이름은 `runcat_poll.py`(진입점 옆의 구현 파일) 상단에 있습니다:
 
 - `STRINGS` — 언어별 `session` / `weekly` / `reset` 행 라벨
 - `CODEX_PLAN_LABELS` — Codex `plan_type`을 표시명으로 매핑 (예: `prolite → "Pro 5x"`, `pro → "Pro 20x"`)
