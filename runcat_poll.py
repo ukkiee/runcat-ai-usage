@@ -597,6 +597,32 @@ def publish(provider, why, card_path, reading_path, reading, now):
     log(f"{provider}: live usage written")
 
 
+def fetch_usage(url, headers, recover, now):
+    """Fetch a Provider's usage over HTTP, recovering the Card from its Stale
+    Reading on any failure.
+
+    The fetch-or-recover shape is identical for both Providers — an HTTP status
+    error recovers with "usage HTTP <code>", anything else with "usage fetch
+    failed (<e>)" — so it is stated once here. What genuinely differs between the
+    Providers (credential acquisition, header assembly, Codex's refresh/rotation)
+    stays in each poll; this covers only the shared shape.
+
+    Returns (True, body) on success, and (False, None) when the fetch failed and
+    recovery has already run — the caller returns without publishing. The flag is
+    what a bare `body` could not carry: a response that is legitimately JSON null
+    is (True, None), a distinct case from a fetch that never landed.
+    """
+    try:
+        _status, body = http_get_json(url, headers)
+    except urllib.error.HTTPError as e:
+        recover(f"usage HTTP {e.code}", now)
+        return False, None
+    except Exception as e:
+        recover(f"usage fetch failed ({e})", now)
+        return False, None
+    return True, body
+
+
 # ----------------------------- Claude -----------------------------
 
 def claude_plan_label(oauth):
@@ -744,13 +770,8 @@ def claude_poll(now):
         return
 
     headers = dict(CLAUDE_USAGE_HEADERS, Authorization=f"Bearer {token.strip()}")
-    try:
-        status, body = http_get_json(CLAUDE_USAGE_URL, headers)
-    except urllib.error.HTTPError as e:
-        claude_recover(f"usage HTTP {e.code}", now)
-        return
-    except Exception as e:
-        claude_recover(f"usage fetch failed ({e})", now)
+    ok, body = fetch_usage(CLAUDE_USAGE_URL, headers, claude_recover, now)
+    if not ok:
         return
 
     reading = claude_reading(body, claude_plan_label(oauth), now)
@@ -981,13 +1002,8 @@ def codex_poll(now):
     headers = {"Authorization": f"Bearer {access}"}
     if account_id:
         headers["ChatGPT-Account-Id"] = account_id
-    try:
-        status, body = http_get_json(CODEX_USAGE_URL, headers)
-    except urllib.error.HTTPError as e:
-        codex_recover(f"usage HTTP {e.code}", now)
-        return
-    except Exception as e:
-        codex_recover(f"usage fetch failed ({e})", now)
+    ok, body = fetch_usage(CODEX_USAGE_URL, headers, codex_recover, now)
+    if not ok:
         return
 
     publish("codex", "usage response", CODEX_CARD, CODEX_READING,
