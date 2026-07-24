@@ -357,6 +357,7 @@ CLAUDE_USAGE_HEADERS = {
     "anthropic-beta": "oauth-2025-04-20",
     "User-Agent": "claude-code/2.1.69",
 }
+CLAUDE_CREDS_FILE = HOME / ".claude" / ".credentials.json"
 CLAUDE_CARD = HOME / ".claude" / "runcat-usage.json"
 CLAUDE_READING = HOME / ".claude" / "runcat-reading.json"
 
@@ -655,7 +656,10 @@ def claude_plan_label(oauth):
 def claude_read_token():
     """Read the Claude OAuth blob from the login Keychain via the signed `security`
     CLI (no GUI prompt). Times out rather than hanging launchd if a prompt ever
-    appears. Returns the parsed claudeAiOauth dict or None."""
+    appears. Falls back to the file store Claude Code keeps when the Keychain is
+    not its credential home (headless / remote logins write
+    `~/.claude/.credentials.json` instead). Both are read-only here.
+    Returns the parsed claudeAiOauth dict or None."""
     try:
         out = subprocess.run(
             ["security", "find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-w"],
@@ -665,11 +669,20 @@ def claude_read_token():
         log("claude: keychain read timed out (prompt?) — skipping live poll")
         return None
     if out.returncode != 0:
-        return None
+        return claude_read_token_file()
     try:
-        return (json.loads(out.stdout) or {}).get("claudeAiOauth") or {}
+        return (json.loads(out.stdout) or {}).get("claudeAiOauth") or claude_read_token_file()
     except json.JSONDecodeError:
+        return claude_read_token_file()
+
+
+def claude_read_token_file():
+    """The same OAuth blob as the Keychain carries, from Claude Code's file store."""
+    try:
+        blob = json.loads(CLAUDE_CREDS_FILE.read_text())
+    except (OSError, json.JSONDecodeError):
         return None
+    return (blob or {}).get("claudeAiOauth") or None
 
 
 # Claude states a Window's kind; these are the two every account has.
