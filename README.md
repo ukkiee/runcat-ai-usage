@@ -26,7 +26,7 @@ Labels auto-switch between English and Korean based on your macOS language (see 
 RunCat Neo can render any local JSON file as a custom-metrics card. This project ships a small Python poller that a `launchd` agent runs every 5 minutes via `runcat-poll.py`. Each run it:
 
 1. Reuses the OAuth credentials **already on your machine** (no separate login):
-   - **Claude** — read from the login Keychain (`Claude Code-credentials`) via Apple's signed `security` CLI.
+   - **Claude** — read from the login Keychain (`Claude Code-credentials`) via Apple's signed `security` CLI, falling back to `~/.claude/.credentials.json` where Claude Code keeps the credential in a file instead (headless / remote logins).
    - **Codex** — read from `~/.codex/auth.json`.
 2. Calls each provider's **dedicated usage endpoint** — a plain metadata `GET`, **not** a model request, so it costs **no tokens** and doesn't touch your rate limits:
    - Claude: `GET https://api.anthropic.com/api/oauth/usage`
@@ -87,7 +87,7 @@ Card labels and plan names live at the top of `runcat_poll.py` (the implementati
 
 ## Auth & safety
 
-- **Claude — read-only.** The access token is only *read* from the Keychain; the Keychain is **never written**. An unsigned script can't do an ACL-preserving `SecItemUpdate` the way the signed apps do, and a coarse `security -U` write could lock Claude Code out of its own credential — so this tool refuses to refresh the Claude token. While the token is valid (i.e. you've used Claude recently) it polls live usage; once it expires it stops polling and instead rebuilds the card from the usage reading kept on the last successful poll (`~/.claude/runcat-reading.json`), zeroing any window whose reset time has passed since, until Claude Code refreshes its own token on your next use.
+- **Claude — read-only.** The access token is only *read* — from the Keychain, or from `~/.claude/.credentials.json` on a machine where Claude Code stores it there; **neither store is ever written**. An unsigned script can't do an ACL-preserving `SecItemUpdate` the way the signed apps do, and a coarse `security -U` write could lock Claude Code out of its own credential — so this tool refuses to refresh the Claude token. While the token is valid (i.e. you've used Claude recently) it polls live usage; once it expires it stops polling and instead rebuilds the card from the usage reading kept on the last successful poll (`~/.claude/runcat-reading.json`), zeroing any window whose reset time has passed since, until Claude Code refreshes its own token on your next use.
 - **Codex — file-based.** If the `~/.codex/auth.json` token is near expiry it is refreshed via the standard OAuth endpoint and written back to that file (the same mechanism Codex uses). Codex tokens are long-lived, so this is rare.
 - No credentials or tokens are ever printed, stored elsewhere, or sent anywhere except the provider's own usage endpoint.
 

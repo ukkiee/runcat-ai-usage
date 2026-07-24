@@ -26,7 +26,7 @@ Claude Code Max 20x            메뉴바: 45% · 45%
 RunCat Neo는 로컬 JSON 파일을 커스텀 메트릭 카드로 렌더링할 수 있습니다. 이 프로젝트는 작은 파이썬 폴러를 담고 있고, `launchd` 에이전트가 `runcat-poll.py`를 통해 5분마다 실행합니다. 실행할 때마다:
 
 1. **이미 이 맥에 있는 OAuth 자격증명을 재사용**합니다(별도 로그인 불필요):
-   - **Claude** — 로그인 키체인(`Claude Code-credentials`)에서 Apple 서명된 `security` CLI로 읽음
+   - **Claude** — 로그인 키체인(`Claude Code-credentials`)에서 Apple 서명된 `security` CLI로 읽고, Claude Code가 자격증명을 파일에 두는 환경(헤드리스·원격 로그인)에서는 `~/.claude/.credentials.json`으로 폴백
    - **Codex** — `~/.codex/auth.json`에서 읽음
 2. 각 서비스의 **전용 usage 엔드포인트**를 호출합니다. 모델 요청이 **아니라** 단순 메타데이터 `GET`이라 **토큰을 전혀 소모하지 않고** rate limit에도 영향을 주지 않습니다:
    - Claude: `GET https://api.anthropic.com/api/oauth/usage`
@@ -87,7 +87,7 @@ cd runcat-ai-usage
 
 ## 인증과 안전성
 
-- **Claude — 읽기 전용.** 액세스 토큰을 키체인에서 *읽기만* 하고 **절대 쓰지 않습니다.** 서명되지 않은 스크립트는 서명된 앱처럼 ACL을 보존하는 `SecItemUpdate`를 할 수 없고, 거친 `security -U` 쓰기는 Claude Code가 자기 자격증명에 접근하지 못하게 잠글 위험이 있습니다. 그래서 이 도구는 Claude 토큰 갱신을 하지 않습니다. 토큰이 유효한 동안(= 최근에 Claude를 사용한 경우)에는 실측을 폴링하고, 만료되면 폴링을 멈추고 대신 마지막 성공 폴링 때 저장해 둔 usage reading(`~/.claude/runcat-reading.json`)으로 카드를 다시 만듭니다(그사이 리셋 시각이 지난 창은 0%로 처리). 다음에 Claude Code를 사용하면 Claude Code가 스스로 토큰을 갱신하므로 다시 실측으로 돌아옵니다.
+- **Claude — 읽기 전용.** 액세스 토큰을 키체인에서, 또는 Claude Code가 자격증명을 파일에 두는 환경이라면 `~/.claude/.credentials.json`에서 *읽기만* 하고 **어느 쪽에도 절대 쓰지 않습니다.** 서명되지 않은 스크립트는 서명된 앱처럼 ACL을 보존하는 `SecItemUpdate`를 할 수 없고, 거친 `security -U` 쓰기는 Claude Code가 자기 자격증명에 접근하지 못하게 잠글 위험이 있습니다. 그래서 이 도구는 Claude 토큰 갱신을 하지 않습니다. 토큰이 유효한 동안(= 최근에 Claude를 사용한 경우)에는 실측을 폴링하고, 만료되면 폴링을 멈추고 대신 마지막 성공 폴링 때 저장해 둔 usage reading(`~/.claude/runcat-reading.json`)으로 카드를 다시 만듭니다(그사이 리셋 시각이 지난 창은 0%로 처리). 다음에 Claude Code를 사용하면 Claude Code가 스스로 토큰을 갱신하므로 다시 실측으로 돌아옵니다.
 - **Codex — 파일 기반.** `~/.codex/auth.json`의 토큰이 만료에 임박하면 표준 OAuth 엔드포인트로 갱신한 뒤 해당 파일에 되씁니다(Codex 자신이 쓰는 방식과 동일). Codex 토큰은 수명이 길어서 이 경우는 드뭅니다.
 - 자격증명이나 토큰은 출력되거나 다른 곳에 저장되지 않으며, 해당 서비스의 usage 엔드포인트 외에는 어디로도 전송되지 않습니다.
 

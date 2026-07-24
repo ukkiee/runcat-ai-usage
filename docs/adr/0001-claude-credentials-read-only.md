@@ -10,6 +10,10 @@ Codex tokens live in a plain file and can be refreshed and written back, so the 
 
 Reading via the signed `security` CLI was measured to work with no prompt, so read-only access is both safe and sufficient.
 
+## Where we read it from
+
+The Keychain is Claude Code's credential home on a desktop login, but not on every machine: a headless or remote login writes `~/.claude/.credentials.json` instead, and there the Keychain holds no item at all. We read that file when the Keychain has nothing to give, which is the difference between a live card and one that never leaves its Stale Reading. The read-only rule covers it unchanged — Claude Code rotates that file too, so writing it back would be the same logout, only in a different place.
+
 ## Consequences
 
 Claude usage is live only while its token is valid — roughly, while you have used Claude within the last hour. Beyond that the card shows a Stale Reading, and usage incurred on another machine is not reflected until this machine polls successfully again. That gap is the price of never touching the Keychain, and it is why the Stale Reading concept exists at all.
