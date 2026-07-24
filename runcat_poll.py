@@ -581,12 +581,25 @@ def recover_card(provider, why, card_path, reading_path, now):
 
 
 def publish(provider, why, card_path, reading_path, reading, now):
-    """Publish a Provider's Card and keep the Reading it came from.
+    """Publish a Provider's Card, or keep the last-good Card when the response gave
+    nothing to publish.
+
+    "Nothing to publish" reaches here two ways that end at the same outcome, and
+    this is the one place both are reconciled. `reading` is None when the mapping
+    could not reconcile the response at all — an unreconcilable legacy scale, which
+    the mapper has already logged the reason for — and a Reading with no renderable
+    Windows when the response simply carried none this poll. Either way the
+    last-good Card stands and the Stale Reading is left untouched: this keeps
+    last-good, it does not recover (decay) from the Stale Reading. That non-recovery
+    is the distinction the legacy-scale refusal rests on — underreporting usage the
+    moment the safety net is first used would be worse than a stale Card.
 
     The Reset a Window arrives without is taken from the one already persisted
     under the same identity, so one transient glitch inside an otherwise good
     response cannot erase the only state a later outage could decay from.
     """
+    if reading is None:
+        return  # unreconcilable response; the mapper has already logged why
     reading = carry_forward_resets(reading, reading_from_json(load_json(reading_path)), now)
     card = render_card(reading, label_set(), now)
     if card is None:
@@ -774,10 +787,8 @@ def claude_poll(now):
     if not ok:
         return
 
-    reading = claude_reading(body, claude_plan_label(oauth), now)
-    if reading is None:
-        return  # the mapper has already said what it could not reconcile
-    publish("claude", "usage response", CLAUDE_CARD, CLAUDE_READING, reading, now)
+    publish("claude", "usage response", CLAUDE_CARD, CLAUDE_READING,
+            claude_reading(body, claude_plan_label(oauth), now), now)
 
 
 # ----------------------------- Codex -----------------------------
