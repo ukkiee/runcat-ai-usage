@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "design",
+  "verdict": "approve",
+  "summary": "R-1 is resolved. design.md:5 now includes both omitted suites; lines 97 and 101–105 require migration of all four test callers, including explicit shared reference time plus derived jwt_exp in test_codex_credentials.py and now-accepting poll stubs in test_entry_point.py. Repository-wide caller inspection supports that inventory. The fix introduces no new critical or high-severity design issue.",
+  "planFile": "docs/reviews/injected-clock/design.md",
+  "planInDiff": true,
+  "reviewedFileCount": 3,
+  "target": "working tree diff",
+  "reviewedSha": "fc2d5beb296100a6b1157cfa0b6c73057bde85d0",
+  "reviewedTree": "cc2db47123a8f4b169a8c5a25e6d761fb87a744a",
+  "reviewedPlanSha256": "3442a8e03943194702ab63bea931b6d5e7d7bdfff481493126916817f2c8265a",
+  "headMovedDuringReview": false,
+  "planDriftDuringReview": false,
+  "codexStatus": 0,
+  "parseError": null,
+  "findingCount": 0,
+  "planFindingCount": 0,
+  "triage": "Clean verdict: note it in your report and COMMIT this artifact with the next bookkeeping commit.",
+  "findings": [],
+  "next_steps": []
+}

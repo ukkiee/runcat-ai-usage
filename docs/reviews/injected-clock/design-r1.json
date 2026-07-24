@@ -1,0 +1,38 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "design",
+  "verdict": "needs-attention",
+  "summary": "Do not ship the design as settled: its “full test migration” omits existing direct callers that will fail when `now` becomes required and the globals are deleted.",
+  "planFile": "docs/reviews/injected-clock/design.md",
+  "planInDiff": true,
+  "reviewedFileCount": 1,
+  "target": "working tree diff",
+  "reviewedSha": "fc2d5beb296100a6b1157cfa0b6c73057bde85d0",
+  "reviewedTree": "cc2db47123a8f4b169a8c5a25e6d761fb87a744a",
+  "reviewedPlanSha256": "325ccf30db1c1d9fba21d49ff266c800c515d13cb138ba79bc0deff9f27c4c19",
+  "headMovedDuringReview": false,
+  "planDriftDuringReview": false,
+  "codexStatus": 0,
+  "parseError": null,
+  "findingCount": 1,
+  "planFindingCount": 1,
+  "triage": "review-gate SKILL.md rules govern: render EVERY finding as a full table row, the human decides each row (accept/reject/defer/question — free text), echo back before applying, max 2 rounds, append decisions.md and COMMIT it with this artifact.",
+  "findings": [
+    {
+      "severity": "medium",
+      "title": "Required-parameter migration omits two dependent test suites",
+      "body": "The design limits migration to `test_stale_reading.py` and `test_codex_reading.py`, but the repository has seven direct `codex_poll()` calls in `tests/test_codex_credentials.py`; that suite also derives its JWT-expiry stub from `mod.NOW_EPOCH`, which the design deletes. `tests/test_entry_point.py` additionally replaces both poll functions with zero-argument lambdas, while the redesigned `main()` will call them with `now`. Building the system as designed therefore causes deterministic test failures and leaves a credential-rotation suite without its clock fixture. This contradicts the claim that there is no unserved caller and that the migration is full.",
+      "file": "docs/reviews/injected-clock/design.md",
+      "line_start": 95,
+      "line_end": 101,
+      "confidence": 0.99,
+      "recommendation": "Expand the declared migration scope to inventory and update every direct poll caller. Pass an explicit reference time in `test_codex_credentials.py`, derive `jwt_exp` from that value, and change the entry-point stubs to accept and optionally assert the supplied `now` argument.",
+      "isPlanFinding": true
+    }
+  ],
+  "next_steps": [
+    "Revise the design’s target and full-migration sections to include `tests/test_codex_credentials.py` and `tests/test_entry_point.py`.",
+    "Re-run a repository-wide caller search before marking the design settled."
+  ]
+}
