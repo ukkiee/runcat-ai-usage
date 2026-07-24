@@ -60,7 +60,6 @@ class StaleReadingCase(unittest.TestCase):
         self.patch("CLAUDE_CARD", self.card_path)
         self.patch("CLAUDE_READING", self.reading_path)
         self.patch("log", self.logs.append)
-        self.at(NOW)
         mod.interface_lang.cache_clear()
         self.addCleanup(mod.interface_lang.cache_clear)
         self.speak("ko")
@@ -70,12 +69,6 @@ class StaleReadingCase(unittest.TestCase):
         setattr(mod, name, value)
         self.addCleanup(lambda: setattr(mod, name, original))
 
-    def at(self, moment):
-        """Move the poller's clock."""
-        self.patch("NOW_EPOCH", moment)
-        self.patch("NOW_MS", moment * 1000)
-        self.patch("NOW_ISO", mod.epoch_to_iso(moment))
-
     def speak(self, lang):
         self.patch("detect_lang", lambda: lang)
         mod.interface_lang.cache_clear()
@@ -84,9 +77,13 @@ class StaleReadingCase(unittest.TestCase):
     def log_text(self):
         return " ".join(self.logs)
 
-    def poll(self, response=RESPONSE, token_expired=False, http_fails=False):
-        """A Claude poll with everything outside the poller stubbed."""
-        expires_at = (mod.NOW_MS - 1) if token_expired else (mod.NOW_MS + 60_000)
+    def poll(self, response=RESPONSE, token_expired=False, http_fails=False, now=NOW):
+        """A Claude poll at `now`, with everything outside the poller stubbed.
+
+        The moment enters as an argument — the poller no longer reads it from a
+        module global — so the token-expiry stub is derived from that same `now`
+        rather than from a patched clock kept in sync with it."""
+        expires_at = (now * 1000 - 1) if token_expired else (now * 1000 + 60_000)
         self.patch("claude_read_token", lambda: {
             "accessToken": "x", "expiresAt": expires_at,
             "rateLimitTier": "default_claude_max_20x",
@@ -98,7 +95,7 @@ class StaleReadingCase(unittest.TestCase):
             return 200, response
 
         self.patch("http_get_json", fetch)
-        mod.claude_poll()
+        mod.claude_poll(now)
 
     def card(self):
         return json.loads(self.card_path.read_text(encoding="utf-8"))
@@ -261,8 +258,7 @@ class CarryForwardTest(StaleReadingCase):
         self.poll()
         self.poll(self.malformed_reset_response())
 
-        self.at(SESSION_RESET + HOUR)
-        self.poll(http_fails=True)
+        self.poll(http_fails=True, now=SESSION_RESET + HOUR)
 
         self.assertEqual(self.rows()[0], ("현재 세션", "0%\n"))
 
@@ -270,9 +266,8 @@ class CarryForwardTest(StaleReadingCase):
         """A Reset that has passed says nothing about the next one, and carrying it
         would decay a share we have only just measured."""
         self.poll()
-        self.at(SESSION_RESET + HOUR)
 
-        self.poll(self.malformed_reset_response())
+        self.poll(self.malformed_reset_response(), now=SESSION_RESET + HOUR)
 
         self.assertIsNone(self.stored()["windows"][0]["resetsAt"])
 
@@ -336,9 +331,8 @@ class RecoveryTest(StaleReadingCase):
         Patching the published Card in place overwrote it, and it never came back
         until a live poll rebuilt everything. Rebuilding cannot lose it."""
         self.poll()
-        self.at(SESSION_RESET + HOUR)
 
-        self.poll(http_fails=True)
+        self.poll(http_fails=True, now=SESSION_RESET + HOUR)
 
         self.assertEqual(self.rows(), [
             # The decayed Window loses its countdown and takes over the spacer.
@@ -350,13 +344,13 @@ class RecoveryTest(StaleReadingCase):
         ])
 
     def test_the_spacing_survives_however_many_failed_polls_follow(self):
+        late = SESSION_RESET + HOUR
         self.poll()
-        self.at(SESSION_RESET + HOUR)
-        self.poll(http_fails=True)
+        self.poll(http_fails=True, now=late)
         first = self.rows()
 
-        self.poll(http_fails=True)
-        self.poll(token_expired=True)
+        self.poll(http_fails=True, now=late)
+        self.poll(token_expired=True, now=late)
 
         self.assertEqual(self.rows(), first)
 
@@ -366,26 +360,23 @@ class RecoveryTest(StaleReadingCase):
         only on a successful poll, which is exactly what is not happening."""
         self.poll()
         self.speak("en")
-        self.at(SESSION_RESET + HOUR)
 
-        self.poll(http_fails=True)
+        self.poll(http_fails=True, now=SESSION_RESET + HOUR)
 
         self.assertEqual(self.rows()[0], ("Session", "0%\n"))
         self.assertEqual(self.rows()[1], ("Weekly", "77%"))
 
     def test_recovery_keeps_counting_down_the_windows_that_have_not_reset(self):
         self.poll()
-        self.at(NOW + HOUR)
 
-        self.poll(http_fails=True)
+        self.poll(http_fails=True, now=NOW + HOUR)
 
         self.assertEqual(self.rows()[1], ("재설정", "1시간 2분 후\n"))
 
     def test_an_expired_token_recovers_the_same_way_an_unreachable_endpoint_does(self):
         self.poll()
-        self.at(SESSION_RESET + HOUR)
 
-        self.poll(token_expired=True)
+        self.poll(token_expired=True, now=SESSION_RESET + HOUR)
 
         self.assertEqual(self.rows()[0], ("현재 세션", "0%\n"))
 
@@ -403,8 +394,7 @@ class RecoveryTest(StaleReadingCase):
         self.poll()
         stored = self.stored()
 
-        self.at(SESSION_RESET + HOUR)
-        self.poll(http_fails=True)
+        self.poll(http_fails=True, now=SESSION_RESET + HOUR)
 
         self.assertEqual(self.stored(), stored, "recovery must not overwrite the record")
 

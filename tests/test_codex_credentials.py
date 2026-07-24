@@ -12,6 +12,12 @@ from pathlib import Path
 
 import runcat_poll as mod  # the tests package puts the repo root on sys.path
 
+# This suite's own reference moment. `codex_poll` now takes the clock as an
+# argument, so each call passes `NOW` and the expiry stub is derived from it —
+# the refresh branch fires because `exp` sits one second past `NOW`, not because a
+# patched global happened to line up with it.
+NOW = 1784806000.0        # 2026-07-23T11:26:40Z
+
 
 AUTH = {
     "last_refresh": "2026-07-17T07:41:33.823Z",
@@ -137,11 +143,12 @@ class CodexPollRotationTest(CodexCredentialCase):
         self.fallbacks = []
 
         self.patch("log", self.logs.append)
-        # Force the "about to expire" branch so a refresh is attempted.
-        self.patch("jwt_exp", lambda _token: mod.NOW_EPOCH + 1)
+        # Force the "about to expire" branch so a refresh is attempted: `exp` sits
+        # one second past the poll's `NOW`, inside REFRESH_BUFFER_S.
+        self.patch("jwt_exp", lambda _token: NOW + 1)
         self.patch("codex_refresh", lambda _rt: {"access_token": "new-access", "refresh_token": "new-refresh"})
         self.patch("http_get_json", self.record_fetch)
-        self.patch("codex_recover", lambda why: self.fallbacks.append(why))
+        self.patch("codex_recover", lambda why, now: self.fallbacks.append(why))
 
     def record_fetch(self, url, headers, timeout=15):
         self.fetched.append(headers)
@@ -154,7 +161,7 @@ class CodexPollRotationTest(CodexCredentialCase):
     def test_stops_and_reports_when_rotation_cannot_be_saved(self):
         self.patch("write_atomic", failing_write)
 
-        mod.codex_poll()
+        mod.codex_poll(NOW)
 
         self.assertEqual(self.fetched, [], "poll continued with an unpersisted token")
         self.assertNotIn("token refreshed", self.log_text, "reported success after losing the rotation")
@@ -172,7 +179,7 @@ class CodexPollRotationTest(CodexCredentialCase):
     def test_records_the_loss_so_later_runs_stay_loud(self):
         self.cannot_persist()
 
-        mod.codex_poll()
+        mod.codex_poll(NOW)
 
         self.assertTrue(self.lost_path.exists(), "the lost rotation was not recorded")
         self.assertTrue(mod.codex_rotation_still_lost("old-refresh"))
@@ -180,7 +187,7 @@ class CodexPollRotationTest(CodexCredentialCase):
     def test_a_lost_rotation_still_decays_the_card(self):
         self.cannot_persist()
 
-        mod.codex_poll()
+        mod.codex_poll(NOW)
 
         self.assertEqual(len(self.fallbacks), 1, "the Card was left frozen instead of decaying")
 
@@ -189,7 +196,7 @@ class CodexPollRotationTest(CodexCredentialCase):
         pretending the loss was recorded."""
         self.patch("write_atomic", failing_write)
 
-        mod.codex_poll()
+        mod.codex_poll(NOW)
 
         self.assertIn("NOT saved", self.log_text)
         self.assertIn("could not record the lost rotation", self.log_text)
@@ -200,7 +207,7 @@ class CodexPollRotationTest(CodexCredentialCase):
         mod.codex_record_rotation_loss("old-refresh")
         self.patch("codex_refresh", lambda rt: refreshes.append(rt))
 
-        mod.codex_poll()
+        mod.codex_poll(NOW)
 
         self.assertEqual(refreshes, [], "tried to refresh with a credential known to be dead")
         self.assertEqual(self.fetched, [])
@@ -218,7 +225,7 @@ class CodexPollRotationTest(CodexCredentialCase):
 
         self.patch("codex_persist_rotation", rotate_then_persist)
 
-        mod.codex_poll()
+        mod.codex_poll(NOW)
 
         self.assertEqual(len(self.fetched), 1, "poll aborted on a benign concurrent rotation")
         self.assertEqual(self.fetched[0]["Authorization"], "Bearer codex-access")
@@ -228,7 +235,7 @@ class CodexPollRotationTest(CodexCredentialCase):
     def test_a_non_dict_refresh_response_degrades_instead_of_exploding(self):
         self.patch("codex_refresh", lambda _rt: ["not", "a", "dict"])
 
-        mod.codex_poll()
+        mod.codex_poll(NOW)
 
         self.assertEqual(len(self.fetched), 1, "gave up instead of trying the existing token")
         self.assertEqual(self.fetched[0]["Authorization"], "Bearer old-access")

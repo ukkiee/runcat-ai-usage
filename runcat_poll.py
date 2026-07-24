@@ -59,10 +59,6 @@ from pathlib import Path
 ISO_SECONDS = "%Y-%m-%dT%H:%M:%SZ"
 
 HOME = Path.home()
-NOW = datetime.now(timezone.utc)
-NOW_EPOCH = NOW.timestamp()
-NOW_MS = NOW_EPOCH * 1000
-NOW_ISO = NOW.strftime(ISO_SECONDS)
 REFRESH_BUFFER_S = 5 * 60  # refresh (Codex) / treat-expired margin
 
 
@@ -383,8 +379,21 @@ WINDOW_IDS = {18000: SESSION_WINDOW, 604800: WEEKLY_WINDOW}
 
 # ----------------------------- helpers -----------------------------
 
+def stamp():
+    """The real wall-clock moment, timezone-aware.
+
+    A poll's logical `now` is threaded in from `main()` so a Card, its Reading and
+    its countdowns are all derived from one instant. This is the other clock: the
+    moment a side effect actually happens. A log line emitted 40 s into a poll
+    should read 40 s later than the poll began, and `last_refresh` / the
+    rotation-loss `at` answer "when did this write happen" — none of them is the
+    poll's logical moment, so they read the wall clock here instead of taking `now`.
+    """
+    return datetime.now(timezone.utc)
+
+
 def log(msg):
-    print(f"[{NOW_ISO}] {msg}", file=sys.stderr)
+    print(f"[{stamp().strftime(ISO_SECONDS)}] {msg}", file=sys.stderr)
 
 
 def load_json(path):
@@ -552,7 +561,7 @@ def render_card(reading, labels, now):
     )
 
 
-def recover_card(provider, why, card_path, reading_path):
+def recover_card(provider, why, card_path, reading_path, now):
     """Rebuild a Provider's Card from its Stale Reading, for a poll that could not
     happen.
 
@@ -563,7 +572,7 @@ def recover_card(provider, why, card_path, reading_path):
     recovery — Windows are matched by identity, never by the row title on screen.
     """
     stale = reading_from_json(load_json(reading_path))
-    card = render_card(decay(stale, NOW_EPOCH), label_set(), NOW_EPOCH) if stale else None
+    card = render_card(decay(stale, now), label_set(), now) if stale else None
     if card is None:
         log(f"{provider}: {why} — no Stale Reading to rebuild from, keeping last-good")
         return
@@ -571,15 +580,15 @@ def recover_card(provider, why, card_path, reading_path):
     log(f"{provider}: {why} — Card rebuilt from the Stale Reading")
 
 
-def publish(provider, why, card_path, reading_path, reading):
+def publish(provider, why, card_path, reading_path, reading, now):
     """Publish a Provider's Card and keep the Reading it came from.
 
     The Reset a Window arrives without is taken from the one already persisted
     under the same identity, so one transient glitch inside an otherwise good
     response cannot erase the only state a later outage could decay from.
     """
-    reading = carry_forward_resets(reading, reading_from_json(load_json(reading_path)), NOW_EPOCH)
-    card = render_card(reading, label_set(), NOW_EPOCH)
+    reading = carry_forward_resets(reading, reading_from_json(load_json(reading_path)), now)
+    card = render_card(reading, label_set(), now)
     if card is None:
         log(f"{provider}: {why} had no windows — keeping last-good")
         return
@@ -719,35 +728,35 @@ def claude_reading(body, plan, now):
                         windows=tuple(windows), captured_at=now)
 
 
-def claude_recover(why):
-    return recover_card("claude", why, CLAUDE_CARD, CLAUDE_READING)
+def claude_recover(why, now):
+    return recover_card("claude", why, CLAUDE_CARD, CLAUDE_READING, now)
 
 
-def claude_poll():
+def claude_poll(now):
     oauth = claude_read_token()
     token = (oauth or {}).get("accessToken") or ""
     expires_at = (oauth or {}).get("expiresAt")  # epoch ms
-    token_ok = bool(token) and (not isinstance(expires_at, (int, float)) or expires_at > NOW_MS)
+    token_ok = bool(token) and (not isinstance(expires_at, (int, float)) or expires_at > now * 1000)
 
     if not token_ok:
         # Expired / unreadable: never refresh (keychain-write unsafe). Recover.
-        claude_recover("token expired/absent")
+        claude_recover("token expired/absent", now)
         return
 
     headers = dict(CLAUDE_USAGE_HEADERS, Authorization=f"Bearer {token.strip()}")
     try:
         status, body = http_get_json(CLAUDE_USAGE_URL, headers)
     except urllib.error.HTTPError as e:
-        claude_recover(f"usage HTTP {e.code}")
+        claude_recover(f"usage HTTP {e.code}", now)
         return
     except Exception as e:
-        claude_recover(f"usage fetch failed ({e})")
+        claude_recover(f"usage fetch failed ({e})", now)
         return
 
-    reading = claude_reading(body, claude_plan_label(oauth), NOW_EPOCH)
+    reading = claude_reading(body, claude_plan_label(oauth), now)
     if reading is None:
         return  # the mapper has already said what it could not reconcile
-    publish("claude", "usage response", CLAUDE_CARD, CLAUDE_READING, reading)
+    publish("claude", "usage response", CLAUDE_CARD, CLAUDE_READING, reading, now)
 
 
 # ----------------------------- Codex -----------------------------
@@ -874,7 +883,7 @@ def codex_persist_rotation(expected_refresh, new_access, new_refresh):
     tokens["access_token"] = new_access
     if new_refresh:
         tokens["refresh_token"] = new_refresh
-    cur["last_refresh"] = NOW.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    cur["last_refresh"] = stamp().strftime("%Y-%m-%dT%H:%M:%S.000Z")
     try:
         write_atomic(CODEX_AUTH_FILE, cur)
     except Exception as error:
@@ -888,7 +897,7 @@ def codex_record_rotation_loss(refresh_token):
     try:
         write_atomic(CODEX_ROTATION_LOST, {
             "consumedRefreshSha256": token_fingerprint(refresh_token),
-            "at": NOW_ISO,
+            "at": stamp().strftime(ISO_SECONDS),
         })
     except Exception as error:
         log(f"codex: could not record the lost rotation ({error})")
@@ -911,11 +920,11 @@ def codex_rotation_still_lost(refresh_token):
     return False
 
 
-def codex_recover(why):
-    return recover_card("codex", why, CODEX_CARD, CODEX_READING)
+def codex_recover(why, now):
+    return recover_card("codex", why, CODEX_CARD, CODEX_READING, now)
 
 
-def codex_poll():
+def codex_poll(now):
     auth = load_json(CODEX_AUTH_FILE)
     tokens = (auth or {}).get("tokens") or {}
     access = tokens.get("access_token") or ""
@@ -925,17 +934,17 @@ def codex_poll():
         # The same situation as Claude's expired token: we cannot read usage, so
         # the Card decays from what we last knew rather than standing frozen at a
         # share that may have reset hours ago.
-        codex_recover("no access token")
+        codex_recover("no access token", now)
         return
 
     if codex_rotation_still_lost(refresh_token):
         log("codex: an earlier rotation was lost and the stored credential is still the "
             "invalidated one — run `codex login` to recover")
-        codex_recover("the stored credential is invalid")
+        codex_recover("the stored credential is invalid", now)
         return
 
     exp = jwt_exp(access)
-    if isinstance(exp, (int, float)) and exp - NOW_EPOCH <= REFRESH_BUFFER_S and refresh_token:
+    if isinstance(exp, (int, float)) and exp - now <= REFRESH_BUFFER_S and refresh_token:
         refreshed = None
         try:
             refreshed = codex_refresh(refresh_token)
@@ -963,7 +972,7 @@ def codex_poll():
                 codex_record_rotation_loss(refresh_token)
                 log(f"codex: token rotated but NOT saved ({e}) — the credential on disk "
                     "is now invalid; run `codex login` to recover")
-                codex_recover("the rotated credential could not be saved")
+                codex_recover("the rotated credential could not be saved", now)
                 return
             else:
                 access = new_access
@@ -975,21 +984,27 @@ def codex_poll():
     try:
         status, body = http_get_json(CODEX_USAGE_URL, headers)
     except urllib.error.HTTPError as e:
-        codex_recover(f"usage HTTP {e.code}")
+        codex_recover(f"usage HTTP {e.code}", now)
         return
     except Exception as e:
-        codex_recover(f"usage fetch failed ({e})")
+        codex_recover(f"usage fetch failed ({e})", now)
         return
 
     publish("codex", "usage response", CODEX_CARD, CODEX_READING,
-            codex_reading(body, codex_plan_label(body.get("plan_type")), NOW_EPOCH))
+            codex_reading(body, codex_plan_label(body.get("plan_type")), now), now)
 
 
 # ----------------------------- main -----------------------------
 
 def main():
+    # One clock per tick, read once here at the single place a poll begins and
+    # handed to both Providers, so a Card, its persisted Reading and its
+    # countdowns are all derived from the same instant. The side-effect
+    # timestamps (log lines, last_refresh, the rotation-loss marker) read the
+    # real wall clock via stamp() instead — see decision 3 of the design.
+    now = datetime.now(timezone.utc).timestamp()
     for name, fn in (("claude", claude_poll), ("codex", codex_poll)):
         try:
-            fn()
+            fn(now)
         except Exception as e:
             log(f"{name}: unexpected error ({e})")

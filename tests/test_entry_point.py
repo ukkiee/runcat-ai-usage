@@ -38,18 +38,30 @@ class EntryPointTest(unittest.TestCase):
 
     def test_entry_point_runs_a_full_poll(self):
         """Run under `__main__` so the guard actually fires, with both Providers
-        stubbed. Without this, deleting the guard would leave every test green."""
+        stubbed. Without this, deleting the guard would leave every test green.
+
+        `main()` now reads the clock once and hands each poll that moment, so the
+        stubs take `now` — and record it, turning what would be a TypeError into
+        positive proof the clock reaches the seam as one shared number."""
         polled = []
         for name in ("claude_poll", "codex_poll"):
             original = getattr(runcat_poll, name)
-            setattr(runcat_poll, name, lambda n=name: polled.append(n))
+            setattr(runcat_poll, name, lambda now, n=name: polled.append((n, now)))
             self.addCleanup(setattr, runcat_poll, name, original)
 
         runpy.run_path(str(ENTRY_POINT), run_name="__main__")
 
         self.assertEqual(
-            polled, ["claude_poll", "codex_poll"],
+            [n for n, _ in polled], ["claude_poll", "codex_poll"],
             "the entry point did not poll both Providers",
+        )
+        self.assertTrue(
+            all(isinstance(now, float) for _, now in polled),
+            "main() must hand each poll a numeric moment, never let it read a global",
+        )
+        self.assertEqual(
+            len({now for _, now in polled}), 1,
+            "both Providers must render against the one moment the tick read",
         )
 
     def test_entry_point_resolves_from_an_unrelated_working_directory(self):

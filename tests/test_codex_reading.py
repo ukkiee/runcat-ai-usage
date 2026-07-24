@@ -84,8 +84,6 @@ class CodexCase(unittest.TestCase):
         self.patch("CODEX_READING", self.reading_path)
         self.patch("CODEX_ROTATION_LOST", home / "runcat-rotation-lost.json")
         self.patch("log", self.logs.append)
-        self.patch("jwt_exp", lambda _token: mod.NOW_EPOCH + 30 * DAY)  # never refresh
-        self.at(NOW)
         mod.interface_lang.cache_clear()
         self.addCleanup(mod.interface_lang.cache_clear)
         self.speak("ko")
@@ -95,12 +93,6 @@ class CodexCase(unittest.TestCase):
         setattr(mod, name, value)
         self.addCleanup(lambda: setattr(mod, name, original))
 
-    def at(self, moment):
-        self.patch("NOW_EPOCH", moment)
-        self.patch("NOW_MS", moment * 1000)
-        self.patch("NOW_ISO", mod.epoch_to_iso(moment))
-        self.patch("jwt_exp", lambda _token: moment + 30 * DAY)
-
     def speak(self, lang):
         self.patch("detect_lang", lambda: lang)
         mod.interface_lang.cache_clear()
@@ -109,14 +101,20 @@ class CodexCase(unittest.TestCase):
     def log_text(self):
         return " ".join(self.logs)
 
-    def poll(self, response=RESPONSE, http_fails=False):
+    def poll(self, response=RESPONSE, http_fails=False, now=NOW):
+        """A Codex poll at `now`, with everything outside the poller stubbed. The
+        token-expiry stub is derived from that same `now` so moving the clock never
+        trips the refresh branch — the stub no longer has to be kept in lock-step
+        with a patched global the way the old `at()` helper did."""
+        self.patch("jwt_exp", lambda _token: now + 30 * DAY)  # never refresh at `now`
+
         def fetch(url, headers, timeout=15):
             if http_fails:
                 raise RuntimeError("the usage endpoint is unreachable")
             return 200, response
 
         self.patch("http_get_json", fetch)
-        mod.codex_poll()
+        mod.codex_poll(now)
 
     def reading(self, response=RESPONSE, now=None):
         return mod.codex_reading(response, mod.codex_plan_label(response.get("plan_type")),
@@ -208,8 +206,7 @@ class CodexResetValidationTest(CodexCase):
 
         self.assertIsNone(self.stored()["windows"][0]["resetsAt"])
 
-        self.at(NOW + 10 * DAY)
-        self.poll(http_fails=True)
+        self.poll(http_fails=True, now=NOW + 10 * DAY)
 
         self.assertEqual(self.rows()[0], ("현재 세션", "47%\n"),
                          "a Window with no believable Reset must never decay")
@@ -253,9 +250,9 @@ class CodexRecoveryTest(CodexCase):
 
     def test_recovery_rebuilds_the_card_from_the_decayed_stale_reading(self):
         self.poll(both_windows())
-        self.at(NOW + 3 * HOUR)  # past the Session Window's Reset, not the Weekly one
 
-        self.poll(http_fails=True)
+        # `now` is past the Session Window's Reset, not the Weekly one.
+        self.poll(http_fails=True, now=NOW + 3 * HOUR)
 
         self.assertEqual(self.rows(), [
             ("현재 세션", "0%\n"),
@@ -266,9 +263,8 @@ class CodexRecoveryTest(CodexCase):
     def test_recovery_still_works_after_the_interface_language_changes(self):
         self.poll(both_windows())
         self.speak("en")
-        self.at(NOW + 3 * HOUR)
 
-        self.poll(http_fails=True)
+        self.poll(http_fails=True, now=NOW + 3 * HOUR)
 
         self.assertEqual(self.rows()[0], ("Session", "0%\n"))
 
@@ -313,9 +309,8 @@ class CodexRecoveryTest(CodexCase):
         expires — not stand at a share that may have reset hours ago."""
         self.poll(both_windows())
         self.auth_path.write_text(json.dumps({"tokens": {}}), encoding="utf-8")
-        self.at(NOW + 3 * HOUR)
 
-        self.poll()
+        self.poll(now=NOW + 3 * HOUR)
 
         self.assertEqual(self.rows()[0], ("현재 세션", "0%\n"))
         self.assertIn("no access token", self.log_text)
@@ -323,9 +318,8 @@ class CodexRecoveryTest(CodexCase):
     def test_a_lost_rotation_recovers_rather_than_leaving_the_card_frozen(self):
         self.poll(both_windows())
         mod.codex_record_rotation_loss("refresh")
-        self.at(NOW + 3 * HOUR)
 
-        self.poll()
+        self.poll(now=NOW + 3 * HOUR)
 
         self.assertIn("codex login", self.log_text)
         self.assertEqual(self.rows()[0], ("현재 세션", "0%\n"))
