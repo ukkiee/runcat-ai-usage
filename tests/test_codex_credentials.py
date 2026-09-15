@@ -46,8 +46,7 @@ class CodexCredentialCase(unittest.TestCase):
         self.auth_path.write_text(json.dumps(AUTH), encoding="utf-8")
         self.lost_path = home / "runcat-rotation-lost.json"
 
-        self.patch("CODEX_AUTH_FILE", self.auth_path)
-        self.patch("CODEX_ROTATION_LOST", self.lost_path)
+        self.home = mod.CodexHome(home)
 
     def patch(self, name, value):
         original = getattr(mod, name)
@@ -65,7 +64,7 @@ class CodexCredentialCase(unittest.TestCase):
 
 class CodexPersistRotationTest(CodexCredentialCase):
     def test_writes_rotation_and_preserves_unrelated_fields(self):
-        mod.codex_persist_rotation("old-refresh", "new-access", "new-refresh")
+        mod.codex_persist_rotation(self.home, "old-refresh", "new-access", "new-refresh")
 
         tokens = self.read_auth()["tokens"]
         self.assertEqual(tokens["access_token"], "new-access")
@@ -74,7 +73,7 @@ class CodexPersistRotationTest(CodexCredentialCase):
         self.assertEqual(tokens["id_token"], "keep-me")
 
     def test_keeps_stored_refresh_when_server_returned_none(self):
-        mod.codex_persist_rotation("old-refresh", "new-access", None)
+        mod.codex_persist_rotation(self.home, "old-refresh", "new-access", None)
 
         tokens = self.read_auth()["tokens"]
         self.assertEqual(tokens["access_token"], "new-access")
@@ -84,19 +83,19 @@ class CodexPersistRotationTest(CodexCredentialCase):
         self.auth_path.write_text("{ this is not json", encoding="utf-8")
 
         with self.assertRaises(mod.CodexPersistError):
-            mod.codex_persist_rotation("old-refresh", "new-access", "new-refresh")
+            mod.codex_persist_rotation(self.home, "old-refresh", "new-access", "new-refresh")
 
     def test_raises_when_auth_file_is_missing(self):
         self.auth_path.unlink()
 
         with self.assertRaises(mod.CodexPersistError):
-            mod.codex_persist_rotation("old-refresh", "new-access", "new-refresh")
+            mod.codex_persist_rotation(self.home, "old-refresh", "new-access", "new-refresh")
 
     def test_raises_when_the_write_itself_fails(self):
         self.patch("write_atomic", failing_write)
 
         with self.assertRaises(mod.CodexPersistError):
-            mod.codex_persist_rotation("old-refresh", "new-access", "new-refresh")
+            mod.codex_persist_rotation(self.home, "old-refresh", "new-access", "new-refresh")
 
     def test_concurrent_rotation_is_distinguishable_and_does_not_clobber(self):
         """Codex rotated the credential while our refresh was in flight. Its token
@@ -104,33 +103,33 @@ class CodexPersistRotationTest(CodexCredentialCase):
         self.write_auth(refresh_token="rotated-by-codex", access_token="codex-access")
 
         with self.assertRaises(mod.CodexConcurrentRotation):
-            mod.codex_persist_rotation("old-refresh", "new-access", "new-refresh")
+            mod.codex_persist_rotation(self.home, "old-refresh", "new-access", "new-refresh")
 
         self.assertEqual(self.read_auth()["tokens"]["refresh_token"], "rotated-by-codex")
 
 
 class CodexRotationLossMarkerTest(CodexCredentialCase):
     def test_marker_records_a_fingerprint_not_the_token(self):
-        mod.codex_record_rotation_loss("old-refresh")
+        mod.codex_record_rotation_loss(self.home, "old-refresh")
 
         marker = json.loads(self.lost_path.read_text(encoding="utf-8"))
         self.assertEqual(marker["consumedRefreshSha256"], mod.token_fingerprint("old-refresh"))
         self.assertNotIn("old-refresh", self.lost_path.read_text(encoding="utf-8"))
 
     def test_still_lost_while_the_dead_credential_is_stored(self):
-        mod.codex_record_rotation_loss("old-refresh")
+        mod.codex_record_rotation_loss(self.home, "old-refresh")
 
-        self.assertTrue(mod.codex_rotation_still_lost("old-refresh"))
+        self.assertTrue(mod.codex_rotation_still_lost(self.home, "old-refresh"))
 
     def test_marker_clears_once_the_credential_changes(self):
-        mod.codex_record_rotation_loss("old-refresh")
+        mod.codex_record_rotation_loss(self.home, "old-refresh")
         self.patch("log", lambda _m: None)
 
-        self.assertFalse(mod.codex_rotation_still_lost("relogged-in-refresh"))
+        self.assertFalse(mod.codex_rotation_still_lost(self.home, "relogged-in-refresh"))
         self.assertFalse(self.lost_path.exists())
 
     def test_no_marker_means_nothing_is_lost(self):
-        self.assertFalse(mod.codex_rotation_still_lost("old-refresh"))
+        self.assertFalse(mod.codex_rotation_still_lost(self.home, "old-refresh"))
 
 
 class CodexPollRotationTest(CodexCredentialCase):
@@ -148,7 +147,7 @@ class CodexPollRotationTest(CodexCredentialCase):
         self.patch("jwt_exp", lambda _token: NOW + 1)
         self.patch("codex_refresh", lambda _rt: {"access_token": "new-access", "refresh_token": "new-refresh"})
         self.patch("http_get_json", self.record_fetch)
-        self.patch("codex_recover", lambda why, now: self.fallbacks.append(why))
+        self.patch("codex_recover", lambda home, why, now: self.fallbacks.append(why))
 
     def record_fetch(self, url, headers, timeout=15):
         self.fetched.append(headers)
@@ -161,7 +160,7 @@ class CodexPollRotationTest(CodexCredentialCase):
     def test_stops_and_reports_when_rotation_cannot_be_saved(self):
         self.patch("write_atomic", failing_write)
 
-        mod.codex_poll(NOW)
+        mod.codex_poll(self.home, NOW)
 
         self.assertEqual(self.fetched, [], "poll continued with an unpersisted token")
         self.assertNotIn("token refreshed", self.log_text, "reported success after losing the rotation")
@@ -179,15 +178,15 @@ class CodexPollRotationTest(CodexCredentialCase):
     def test_records_the_loss_so_later_runs_stay_loud(self):
         self.cannot_persist()
 
-        mod.codex_poll(NOW)
+        mod.codex_poll(self.home, NOW)
 
         self.assertTrue(self.lost_path.exists(), "the lost rotation was not recorded")
-        self.assertTrue(mod.codex_rotation_still_lost("old-refresh"))
+        self.assertTrue(mod.codex_rotation_still_lost(self.home, "old-refresh"))
 
     def test_a_lost_rotation_still_decays_the_card(self):
         self.cannot_persist()
 
-        mod.codex_poll(NOW)
+        mod.codex_poll(self.home, NOW)
 
         self.assertEqual(len(self.fallbacks), 1, "the Card was left frozen instead of decaying")
 
@@ -196,7 +195,7 @@ class CodexPollRotationTest(CodexCredentialCase):
         pretending the loss was recorded."""
         self.patch("write_atomic", failing_write)
 
-        mod.codex_poll(NOW)
+        mod.codex_poll(self.home, NOW)
 
         self.assertIn("NOT saved", self.log_text)
         self.assertIn("could not record the lost rotation", self.log_text)
@@ -204,10 +203,10 @@ class CodexPollRotationTest(CodexCredentialCase):
 
     def test_a_later_run_refuses_before_burning_another_refresh(self):
         refreshes = []
-        mod.codex_record_rotation_loss("old-refresh")
+        mod.codex_record_rotation_loss(self.home, "old-refresh")
         self.patch("codex_refresh", lambda rt: refreshes.append(rt))
 
-        mod.codex_poll(NOW)
+        mod.codex_poll(self.home, NOW)
 
         self.assertEqual(refreshes, [], "tried to refresh with a credential known to be dead")
         self.assertEqual(self.fetched, [])
@@ -219,13 +218,13 @@ class CodexPollRotationTest(CodexCredentialCase):
         and must not tell a healthy user to re-login."""
         original_persist = mod.codex_persist_rotation
 
-        def rotate_then_persist(expected, new_access, new_refresh):
+        def rotate_then_persist(home, expected, new_access, new_refresh):
             self.write_auth(refresh_token="rotated-by-codex", access_token="codex-access")
-            return original_persist(expected, new_access, new_refresh)
+            return original_persist(home, expected, new_access, new_refresh)
 
         self.patch("codex_persist_rotation", rotate_then_persist)
 
-        mod.codex_poll(NOW)
+        mod.codex_poll(self.home, NOW)
 
         self.assertEqual(len(self.fetched), 1, "poll aborted on a benign concurrent rotation")
         self.assertEqual(self.fetched[0]["Authorization"], "Bearer codex-access")
@@ -235,7 +234,7 @@ class CodexPollRotationTest(CodexCredentialCase):
     def test_a_non_dict_refresh_response_degrades_instead_of_exploding(self):
         self.patch("codex_refresh", lambda _rt: ["not", "a", "dict"])
 
-        mod.codex_poll(NOW)
+        mod.codex_poll(self.home, NOW)
 
         self.assertEqual(len(self.fetched), 1, "gave up instead of trying the existing token")
         self.assertEqual(self.fetched[0]["Authorization"], "Bearer old-access")

@@ -27,11 +27,11 @@ RunCat Neo는 로컬 JSON 파일을 커스텀 메트릭 카드로 렌더링할 �
 
 1. **이미 이 맥에 있는 OAuth 자격증명을 재사용**합니다(별도 로그인 불필요):
    - **Claude** — 로그인 키체인(`Claude Code-credentials`)에서 Apple 서명된 `security` CLI로 읽고, Claude Code가 자격증명을 파일에 두는 환경(헤드리스·원격 로그인)에서는 `~/.claude/.credentials.json`으로 폴백
-   - **Codex** — `~/.codex/auth.json`에서 읽음
+   - **Codex** — `~/.codex/auth.json`에서 읽고, `RUNCAT_CODEX_HOMES`를 지정했다면 나열된 Codex 홈마다 각자의 `auth.json`에서 읽음([여러 Codex 계정](#여러-codex-계정) 참고)
 2. 각 서비스의 **전용 usage 엔드포인트**를 호출합니다. 모델 요청이 **아니라** 단순 메타데이터 `GET`이라 **토큰을 전혀 소모하지 않고** rate limit에도 영향을 주지 않습니다:
    - Claude: `GET https://api.anthropic.com/api/oauth/usage`
    - Codex: `GET https://chatgpt.com/backend-api/wham/usage`
-3. `~/.claude/runcat-usage.json`과 `~/.codex/runcat-usage.json`을 씁니다. RunCat Neo가 이 파일들을 감시하다가 변경되면 카드를 갱신합니다.
+3. `~/.claude/runcat-usage.json`과 각 Codex 홈의 `runcat-usage.json`(기본값은 `~/.codex/runcat-usage.json`)을 씁니다. RunCat Neo가 이 파일들을 감시하다가 변경되면 카드를 갱신합니다.
 
 표시되는 값은 공식 앱이 보여주는 것과 동일한 **계정 단위 실측값**이며, 앱이 꺼져 있어도 조회됩니다.
 
@@ -61,6 +61,16 @@ cd runcat-ai-usage
 
 `install.sh`는 클론한 폴더의 폴러를 5분마다 실행하는 `launchd` 에이전트를 만듭니다(`RunAtLoad`로 즉시 1회 실행). 주기를 바꾸려면 `RUNCAT_POLL_INTERVAL=600 ./install.sh`처럼 실행하세요.
 
+### 여러 Codex 계정
+
+Codex 계정을 홈 디렉터리별로 나눠 쓰고 있다면(예: `CODEX_HOME=~/.codex2 codex`), 설치할 때 모든 홈을 나열합니다:
+
+```sh
+RUNCAT_CODEX_HOMES="~/.codex,~/.codex2" ./install.sh
+```
+
+홈마다 자기 `auth.json` 옆에 카드가 따로 생기므로, RunCat Neo에 `~/.codex2/runcat-usage.json`도 추가해야 합니다. `~/.codex`가 아닌 홈의 카드는 제목에 디렉터리 이름이 붙습니다(`Codex Pro 5x (codex2)`). 홈을 자동으로 찾지는 않습니다. 자동으로 찾으면 `auth.json` 백업 사본까지 토큰을 갱신하게 되고, 그러면 실제 로그인이 풀리기 때문입니다.
+
 ### 제거
 
 ```sh
@@ -71,11 +81,12 @@ cd runcat-ai-usage
 
 ## 설정
 
-환경 변수 (`install.sh`가 만든 `launchd` plist의 `EnvironmentVariables` 딕셔너리에 넣거나, 수동 실행 시 export):
+환경 변수 (`install.sh`를 실행할 때 `RUNCAT_CODEX_HOMES` / `RUNCAT_LANG`을 지정하면 `launchd` plist에 기록되고, 수동으로 실행할 때는 export):
 
 | 변수 | 기본값 | 효과 |
 |---|---|---|
 | `RUNCAT_LANG` | 자동 (macOS 시스템 언어) | `ko` 또는 `en`으로 카드 언어 강제 지정 |
+| `RUNCAT_CODEX_HOMES` | `~/.codex` | 조회할 Codex 홈 목록(쉼표 구분). 홈마다 카드가 하나씩 생김 |
 | `RUNCAT_POLL_INTERVAL` | `300` | 폴링 주기(초). 설치 시점에만 적용 |
 
 카드 라벨과 플랜 이름은 `runcat_poll.py`(진입점 옆의 구현 파일) 상단에 있습니다:
@@ -88,7 +99,7 @@ cd runcat-ai-usage
 ## 인증과 안전성
 
 - **Claude — 읽기 전용.** 액세스 토큰을 키체인에서, 또는 Claude Code가 자격증명을 파일에 두는 환경이라면 `~/.claude/.credentials.json`에서 *읽기만* 하고 **어느 쪽에도 절대 쓰지 않습니다.** 서명되지 않은 스크립트는 서명된 앱처럼 ACL을 보존하는 `SecItemUpdate`를 할 수 없고, 거친 `security -U` 쓰기는 Claude Code가 자기 자격증명에 접근하지 못하게 잠글 위험이 있습니다. 그래서 이 도구는 Claude 토큰 갱신을 하지 않습니다. 토큰이 유효한 동안(= 최근에 Claude를 사용한 경우)에는 실측을 폴링하고, 만료되면 폴링을 멈추고 대신 마지막 성공 폴링 때 저장해 둔 usage reading(`~/.claude/runcat-reading.json`)으로 카드를 다시 만듭니다(그사이 리셋 시각이 지난 창은 100% 남음으로 처리). 다음에 Claude Code를 사용하면 Claude Code가 스스로 토큰을 갱신하므로 다시 실측으로 돌아옵니다.
-- **Codex — 파일 기반.** `~/.codex/auth.json`의 토큰이 만료에 임박하면 표준 OAuth 엔드포인트로 갱신한 뒤 해당 파일에 되씁니다(Codex 자신이 쓰는 방식과 동일). Codex 토큰은 수명이 길어서 이 경우는 드뭅니다.
+- **Codex — 파일 기반.** Codex 홈의 `auth.json`에 있는 토큰이 만료에 임박하면 표준 OAuth 엔드포인트로 갱신한 뒤 해당 파일에 되씁니다(Codex 자신이 쓰는 방식과 동일). Codex 토큰은 수명이 길어서 이 경우는 드뭅니다.
 - 자격증명이나 토큰은 출력되거나 다른 곳에 저장되지 않으며, 해당 서비스의 usage 엔드포인트 외에는 어디로도 전송되지 않습니다.
 
 ## 주의사항

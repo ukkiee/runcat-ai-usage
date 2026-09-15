@@ -42,18 +42,27 @@ class EntryPointTest(unittest.TestCase):
 
         `main()` now reads the clock once and hands each poll that moment, so the
         stubs take `now` — and record it, turning what would be a TypeError into
-        positive proof the clock reaches the seam as one shared number."""
+        positive proof the clock reaches the seam as one shared number.
+
+        Codex is polled once per configured home, each with its own home."""
         polled = []
-        for name in ("claude_poll", "codex_poll"):
+        homes = [runcat_poll.CodexHome(Path("/nowhere/.codex")),
+                 runcat_poll.CodexHome(Path("/nowhere/.codex2"), "codex2")]
+        stubs = {
+            "claude_poll": lambda now: polled.append(("claude_poll", now)),
+            "codex_poll": lambda home, now: polled.append((f"codex_poll:{home.name}", now)),
+            "codex_homes": lambda: homes,
+        }
+        for name, stub in stubs.items():
             original = getattr(runcat_poll, name)
-            setattr(runcat_poll, name, lambda now, n=name: polled.append((n, now)))
+            setattr(runcat_poll, name, stub)
             self.addCleanup(setattr, runcat_poll, name, original)
 
         runpy.run_path(str(ENTRY_POINT), run_name="__main__")
 
         self.assertEqual(
-            [n for n, _ in polled], ["claude_poll", "codex_poll"],
-            "the entry point did not poll both Providers",
+            [n for n, _ in polled], ["claude_poll", "codex_poll:", "codex_poll:codex2"],
+            "the entry point did not poll Claude and every Codex home",
         )
         self.assertTrue(
             all(isinstance(now, float) for _, now in polled),
@@ -61,7 +70,7 @@ class EntryPointTest(unittest.TestCase):
         )
         self.assertEqual(
             len({now for _, now in polled}), 1,
-            "both Providers must render against the one moment the tick read",
+            "every poll must render against the one moment the tick read",
         )
 
     def test_entry_point_resolves_from_an_unrelated_working_directory(self):

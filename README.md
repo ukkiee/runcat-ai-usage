@@ -27,11 +27,11 @@ RunCat Neo can render any local JSON file as a custom-metrics card. This project
 
 1. Reuses the OAuth credentials **already on your machine** (no separate login):
    - **Claude** — read from the login Keychain (`Claude Code-credentials`) via Apple's signed `security` CLI, falling back to `~/.claude/.credentials.json` where Claude Code keeps the credential in a file instead (headless / remote logins).
-   - **Codex** — read from `~/.codex/auth.json`.
+   - **Codex** — read from `~/.codex/auth.json`, or from the `auth.json` of every Codex home listed in `RUNCAT_CODEX_HOMES` (see [Several Codex accounts](#several-codex-accounts)).
 2. Calls each provider's **dedicated usage endpoint** — a plain metadata `GET`, **not** a model request, so it costs **no tokens** and doesn't touch your rate limits:
    - Claude: `GET https://api.anthropic.com/api/oauth/usage`
    - Codex: `GET https://chatgpt.com/backend-api/wham/usage`
-3. Writes `~/.claude/runcat-usage.json` and `~/.codex/runcat-usage.json`, which RunCat Neo watches and renders.
+3. Writes `~/.claude/runcat-usage.json` and a `runcat-usage.json` in each Codex home (`~/.codex/runcat-usage.json` by default), which RunCat Neo watches and renders.
 
 The numbers are the real, account-wide values (the same ones the official apps show), available even when the apps are closed.
 
@@ -61,6 +61,16 @@ To show a value in the menu bar, click the Metrics Bar and toggle the source on.
 
 `install.sh` writes a `launchd` agent that runs the poller from the cloned folder every 5 minutes (`RunAtLoad` fires it once immediately). Set a different cadence with `RUNCAT_POLL_INTERVAL=600 ./install.sh`.
 
+### Several Codex accounts
+
+If you keep more than one Codex login in separate homes (e.g. `CODEX_HOME=~/.codex2 codex`), list every home when installing:
+
+```sh
+RUNCAT_CODEX_HOMES="~/.codex,~/.codex2" ./install.sh
+```
+
+Each home gets its own card beside its own `auth.json`, so add `~/.codex2/runcat-usage.json` in RunCat Neo as well. A card from any home other than `~/.codex` carries the directory name in its title (`Codex Pro 5x (codex2)`). Homes are never discovered on their own: a backup copy of `auth.json` would otherwise be refreshed and sign the real login out.
+
 ### Uninstall
 
 ```sh
@@ -71,11 +81,12 @@ Removes the `launchd` agent and the poller's own state files. The `runcat-usage.
 
 ## Configuration
 
-Environment variables (set them in the `launchd` plist that `install.sh` writes, under a `EnvironmentVariables` dict, or export before a manual run):
+Environment variables (export `RUNCAT_CODEX_HOMES` / `RUNCAT_LANG` when running `install.sh` and it writes them into the `launchd` plist, or export them before a manual run):
 
 | Variable | Default | Effect |
 |---|---|---|
 | `RUNCAT_LANG` | auto (macOS UI language) | `ko` or `en` to force the card language. |
+| `RUNCAT_CODEX_HOMES` | `~/.codex` | Comma-separated Codex homes to poll, one card each. |
 | `RUNCAT_POLL_INTERVAL` | `300` | Poll interval in seconds (install-time only). |
 
 Card labels and plan names live at the top of `runcat_poll.py` (the implementation beside the entry point):
@@ -88,7 +99,7 @@ Card labels and plan names live at the top of `runcat_poll.py` (the implementati
 ## Auth & safety
 
 - **Claude — read-only.** The access token is only *read* — from the Keychain, or from `~/.claude/.credentials.json` on a machine where Claude Code stores it there; **neither store is ever written**. An unsigned script can't do an ACL-preserving `SecItemUpdate` the way the signed apps do, and a coarse `security -U` write could lock Claude Code out of its own credential — so this tool refuses to refresh the Claude token. While the token is valid (i.e. you've used Claude recently) it polls live usage; once it expires it stops polling and instead rebuilds the card from the usage reading kept on the last successful poll (`~/.claude/runcat-reading.json`), showing any window whose reset time has passed since as fully left, until Claude Code refreshes its own token on your next use.
-- **Codex — file-based.** If the `~/.codex/auth.json` token is near expiry it is refreshed via the standard OAuth endpoint and written back to that file (the same mechanism Codex uses). Codex tokens are long-lived, so this is rare.
+- **Codex — file-based.** If the token in a Codex home's `auth.json` is near expiry it is refreshed via the standard OAuth endpoint and written back to that file (the same mechanism Codex uses). Codex tokens are long-lived, so this is rare.
 - No credentials or tokens are ever printed, stored elsewhere, or sent anywhere except the provider's own usage endpoint.
 
 ## Caveats

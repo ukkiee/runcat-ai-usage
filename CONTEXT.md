@@ -10,6 +10,10 @@ Tracks how much of each AI coding provider's rate limit has been consumed, and s
 A service whose rate-limit usage this tool tracks. Currently Claude Code and Codex.
 _Avoid_: vendor, backend, service, source
 
+**Account**:
+One login to a Provider. Codex can hold several on one machine, one per Codex home (`CODEX_HOME`); each Account has its own credential, Usage Reading and Card.
+_Avoid_: profile, user, instance
+
 **Plan**:
 The subscription tier that determines a Provider's limits — e.g. "Max 20x", "Pro 5x".
 _Avoid_: tier, subscription, subscriptionType
@@ -45,5 +49,5 @@ A Usage Reading we could not replace because the Provider was unreachable or its
 _Avoid_: fallback, cached usage, last-good
 
 **Card**:
-What RunCat Neo shows for one Provider — the rendered presentation of a Usage Reading, plus the short text in the menu bar. A Card shows the share of each Window that is left; the Usage Reading keeps the share that was used.
+What RunCat Neo shows for one Account — the rendered presentation of a Usage Reading, plus the short text in the menu bar. A Card shows the share of each Window that is left; the Usage Reading keeps the share that was used.
 _Avoid_: snapshot, widget, tile, dashboard entry

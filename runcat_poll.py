@@ -11,10 +11,14 @@ cost) to write real, account-wide rate-limit numbers into the RunCat Neo Cards.
 Designed to run on a launchd interval (every ~5 min).
 
 Card shape:
-- title carries the plan, e.g. "Claude Code Max 20x" / "Codex Pro Lite".
+- title carries the plan, e.g. "Claude Code Max 20x" / "Codex Pro Lite", plus the
+  home it came from for any Codex home other than ~/.codex ("Codex Pro 5x (codex2)").
 - each rate-limit window is two rows: the share still left (with the bar) and,
   underneath it, a bar-less "reset in <time>" line so the countdown isn't cramped
   next to the percentage. Windows are "Session" (5h) and "Weekly" (7d).
+
+Every Codex home named in RUNCAT_CODEX_HOMES (comma-separated, default ~/.codex)
+is its own account and gets its own Card beside its own auth.json.
 
 Claude's response becomes a Usage Reading first — every Window with a stable
 identity, a bounded used share and a Reset we can believe — and the Card is
@@ -22,7 +26,7 @@ rendered from that Reading with the clock and the label set handed in. What the
 user sees is downstream of data rather than being the only place it exists.
 
 Design (safe / read-mostly):
-- Codex tokens live in ~/.codex/auth.json (a plain file). We may refresh an
+- Codex tokens live in each home's auth.json (a plain file). We may refresh an
   expired token and write it back to that file — the same mechanism Codex uses.
 - Claude tokens live in the macOS Keychain. We READ the access token via the
   Apple-signed `security` CLI (no GUI prompt) but NEVER write the keychain: an
@@ -367,10 +371,8 @@ CLAUDE_READING = HOME / ".claude" / "runcat-reading.json"
 CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 CODEX_REFRESH_URL = "https://auth.openai.com/oauth/token"
 CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
-CODEX_AUTH_FILE = HOME / ".codex" / "auth.json"
-CODEX_CARD = HOME / ".codex" / "runcat-usage.json"
-CODEX_READING = HOME / ".codex" / "runcat-reading.json"
-CODEX_ROTATION_LOST = HOME / ".codex" / "runcat-rotation-lost.json"
+CODEX_DEFAULT_HOME = HOME / ".codex"
+CODEX_HOMES_ENV = "RUNCAT_CODEX_HOMES"
 
 CODEX_PLAN_LABELS = {
     "free": "Free", "plus": "Plus", "pro": "Pro 20x", "prolite": "Pro 5x",
@@ -528,9 +530,12 @@ def bar_two(*used):
     return " · ".join(parts) if parts else None
 
 
-def card_title(provider, plan):
-    """'Claude Code' plus the Plan, e.g. 'Claude Code Max 20x'."""
-    return (CARD_HEADINGS[provider]["name"] + " " + plan).strip()
+def card_title(provider, plan, account=""):
+    """'Claude Code' plus the Plan, e.g. 'Claude Code Max 20x', and the account's
+    name when the Provider has more than the one default login, e.g.
+    'Codex Pro 5x (codex2)'."""
+    title = (CARD_HEADINGS[provider]["name"] + " " + plan).strip()
+    return f"{title} ({account})" if account else title
 
 
 def finalize(title, symbol, metrics, bar_value, now):
@@ -546,7 +551,7 @@ def finalize(title, symbol, metrics, bar_value, now):
     return card
 
 
-def render_card(reading, labels, now):
+def render_card(reading, labels, now, account=""):
     """A Usage Reading as the Card RunCat Neo reads.
 
     The clock and the label set are handed in, so the same Reading renders the
@@ -554,6 +559,10 @@ def render_card(reading, labels, now):
     which is what lets a recovered Reading be re-rendered instead of a published
     Card being patched in place. Returns None when there is nothing to publish,
     leaving the last-good Card standing.
+
+    `account` names which of a Provider's logins the Reading belongs to. It comes
+    from where the Reading was read, never from the Reading, so it is handed in
+    the same way the clock is.
     """
     blocks = []
     for window in reading.windows:
@@ -567,7 +576,7 @@ def render_card(reading, labels, now):
         return None
     shares = {window.id: window.used for window in reading.windows}
     return finalize(
-        card_title(reading.provider, reading.plan),
+        card_title(reading.provider, reading.plan, account),
         CARD_HEADINGS[reading.provider]["symbol"],
         metrics,
         bar_two(shares.get(SESSION_WINDOW), shares.get(WEEKLY_WINDOW)),
@@ -575,7 +584,12 @@ def render_card(reading, labels, now):
     )
 
 
-def recover_card(provider, why, card_path, reading_path, now):
+def log_tag(provider, account=""):
+    """How log lines name one login: 'codex', or 'codex (codex2)'."""
+    return f"{provider} ({account})" if account else provider
+
+
+def recover_card(provider, why, card_path, reading_path, now, account=""):
     """Rebuild a Provider's Card from its Stale Reading, for a poll that could not
     happen.
 
@@ -586,15 +600,16 @@ def recover_card(provider, why, card_path, reading_path, now):
     recovery — Windows are matched by identity, never by the row title on screen.
     """
     stale = reading_from_json(load_json(reading_path))
-    card = render_card(decay(stale, now), label_set(), now) if stale else None
+    card = render_card(decay(stale, now), label_set(), now, account) if stale else None
+    tag = log_tag(provider, account)
     if card is None:
-        log(f"{provider}: {why} — no Stale Reading to rebuild from, keeping last-good")
+        log(f"{tag}: {why} — no Stale Reading to rebuild from, keeping last-good")
         return
     write_atomic(card_path, card)
-    log(f"{provider}: {why} — Card rebuilt from the Stale Reading")
+    log(f"{tag}: {why} — Card rebuilt from the Stale Reading")
 
 
-def publish(provider, why, card_path, reading_path, reading, now):
+def publish(provider, why, card_path, reading_path, reading, now, account=""):
     """Publish a Provider's Card, or keep the last-good Card when the response gave
     nothing to publish.
 
@@ -615,13 +630,14 @@ def publish(provider, why, card_path, reading_path, reading, now):
     if reading is None:
         return  # unreconcilable response; the mapper has already logged why
     reading = carry_forward_resets(reading, reading_from_json(load_json(reading_path)), now)
-    card = render_card(reading, label_set(), now)
+    card = render_card(reading, label_set(), now, account)
+    tag = log_tag(provider, account)
     if card is None:
-        log(f"{provider}: {why} had no windows — keeping last-good")
+        log(f"{tag}: {why} had no windows — keeping last-good")
         return
     write_atomic(card_path, card)
     write_atomic(reading_path, reading_as_json(reading))
-    log(f"{provider}: live usage written")
+    log(f"{tag}: live usage written")
 
 
 def fetch_usage(url, headers, recover, now):
@@ -819,6 +835,68 @@ def claude_poll(now):
 
 # ----------------------------- Codex -----------------------------
 
+@dataclass(frozen=True)
+class CodexHome:
+    """One Codex login on this machine: a CODEX_HOME directory and its auth.json.
+
+    Each home is a separate account, so everything the poller keeps for it — the
+    Card, the Reading, the rotation-loss marker — lives beside that auth.json and
+    never beside another home's. `name` is empty for ~/.codex, which keeps the
+    title and log lines it has always had; any other home is named after its
+    directory ('~/.codex2' -> 'codex2').
+    """
+
+    root: Path
+    name: str = ""
+
+    @property
+    def auth_file(self):
+        return self.root / "auth.json"
+
+    @property
+    def card(self):
+        return self.root / "runcat-usage.json"
+
+    @property
+    def reading(self):
+        return self.root / "runcat-reading.json"
+
+    @property
+    def rotation_lost(self):
+        return self.root / "runcat-rotation-lost.json"
+
+    @property
+    def tag(self):
+        return log_tag("codex", self.name)
+
+
+def codex_homes(environ=None):
+    """The Codex homes to poll: RUNCAT_CODEX_HOMES (comma-separated) when set,
+    else ~/.codex alone.
+
+    Homes are named explicitly rather than discovered. A backup such as
+    ~/.codex.bak can hold a copy of a live credential, and refreshing that copy
+    would rotate the refresh token out from under the real login.
+
+    The same directory named twice is polled once, so one credential is never
+    refreshed twice in a run.
+    """
+    raw = (os.environ if environ is None else environ).get(CODEX_HOMES_ENV, "")
+    entries = [entry.strip() for entry in raw.split(",") if entry.strip()]
+    if not entries:
+        return [CodexHome(CODEX_DEFAULT_HOME)]
+
+    default = CODEX_DEFAULT_HOME.expanduser().resolve()
+    homes, seen = [], set()
+    for entry in entries:
+        root = Path(entry).expanduser().resolve()
+        if root in seen:
+            continue
+        seen.add(root)
+        homes.append(CodexHome(root, "" if root == default else root.name.lstrip(".") or str(root)))
+    return homes
+
+
 def jwt_exp(token):
     try:
         part = token.split(".")[1]
@@ -916,8 +994,8 @@ def token_fingerprint(token):
     return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
 
 
-def codex_persist_rotation(expected_refresh, new_access, new_refresh):
-    """Record a rotated Codex credential in ~/.codex/auth.json, preserving every
+def codex_persist_rotation(home, expected_refresh, new_access, new_refresh):
+    """Record a rotated Codex credential in the home's auth.json, preserving every
     other field in the file.
 
     Raises rather than failing quietly. By the time this runs the server has already
@@ -929,9 +1007,9 @@ def codex_persist_rotation(expected_refresh, new_access, new_refresh):
     request was in flight, and its newer token, not ours, is what the file should
     keep. That case raises `CodexConcurrentRotation` so callers can tell it apart
     from a genuine loss; everything else raises `CodexPersistError`."""
-    cur = load_json(CODEX_AUTH_FILE)
+    cur = load_json(home.auth_file)
     if not isinstance(cur, dict):
-        raise CodexPersistError(f"{CODEX_AUTH_FILE} is missing or unreadable as JSON")
+        raise CodexPersistError(f"{home.auth_file} is missing or unreadable as JSON")
 
     stored_refresh = (cur.get("tokens") or {}).get("refresh_token")
     if stored_refresh != expected_refresh:
@@ -943,47 +1021,47 @@ def codex_persist_rotation(expected_refresh, new_access, new_refresh):
         tokens["refresh_token"] = new_refresh
     cur["last_refresh"] = stamp().strftime("%Y-%m-%dT%H:%M:%S.000Z")
     try:
-        write_atomic(CODEX_AUTH_FILE, cur)
+        write_atomic(home.auth_file, cur)
     except Exception as error:
-        raise CodexPersistError(f"could not write {CODEX_AUTH_FILE}: {error}") from error
+        raise CodexPersistError(f"could not write {home.auth_file}: {error}") from error
 
 
-def codex_record_rotation_loss(refresh_token):
+def codex_record_rotation_loss(home, refresh_token):
     """Remember that this credential was spent without its replacement being saved,
     so later runs keep saying so instead of decaying into a generic refresh error.
     Stores only a fingerprint, never the token."""
     try:
-        write_atomic(CODEX_ROTATION_LOST, {
+        write_atomic(home.rotation_lost, {
             "consumedRefreshSha256": token_fingerprint(refresh_token),
             "at": stamp().strftime(ISO_SECONDS),
         })
     except Exception as error:
-        log(f"codex: could not record the lost rotation ({error})")
+        log(f"{home.tag}: could not record the lost rotation ({error})")
 
 
-def codex_rotation_still_lost(refresh_token):
+def codex_rotation_still_lost(home, refresh_token):
     """True when an earlier run burned a rotation it could not save and the stored
     credential is still that dead one. Clears the marker as soon as the credential
     changes, so `codex login` is the whole recovery procedure."""
-    marker = load_json(CODEX_ROTATION_LOST)
+    marker = load_json(home.rotation_lost)
     if not isinstance(marker, dict):
         return False
     if marker.get("consumedRefreshSha256") == token_fingerprint(refresh_token):
         return True
     try:
-        CODEX_ROTATION_LOST.unlink()
+        home.rotation_lost.unlink()
     except OSError:
         pass
-    log("codex: credential changed since the lost rotation — clearing the marker")
+    log(f"{home.tag}: credential changed since the lost rotation — clearing the marker")
     return False
 
 
-def codex_recover(why, now):
-    return recover_card("codex", why, CODEX_CARD, CODEX_READING, now)
+def codex_recover(home, why, now):
+    return recover_card("codex", why, home.card, home.reading, now, home.name)
 
 
-def codex_poll(now):
-    auth = load_json(CODEX_AUTH_FILE)
+def codex_poll(home, now):
+    auth = load_json(home.auth_file)
     tokens = (auth or {}).get("tokens") or {}
     access = tokens.get("access_token") or ""
     account_id = tokens.get("account_id")
@@ -992,13 +1070,13 @@ def codex_poll(now):
         # The same situation as Claude's expired token: we cannot read usage, so
         # the Card decays from what we last knew rather than standing frozen at a
         # share that may have reset hours ago.
-        codex_recover("no access token", now)
+        codex_recover(home, "no access token", now)
         return
 
-    if codex_rotation_still_lost(refresh_token):
-        log("codex: an earlier rotation was lost and the stored credential is still the "
-            "invalidated one — run `codex login` to recover")
-        codex_recover("the stored credential is invalid", now)
+    if codex_rotation_still_lost(home, refresh_token):
+        log(f"{home.tag}: an earlier rotation was lost and the stored credential is still "
+            "the invalidated one — run `codex login` to recover")
+        codex_recover(home, "the stored credential is invalid", now)
         return
 
     exp = jwt_exp(access)
@@ -1007,11 +1085,11 @@ def codex_poll(now):
         try:
             refreshed = codex_refresh(refresh_token)
         except urllib.error.HTTPError as e:
-            log(f"codex: refresh HTTP {e.code} — trying existing token")
+            log(f"{home.tag}: refresh HTTP {e.code} — trying existing token")
         except Exception as e:
-            log(f"codex: refresh failed ({e}) — trying existing token")
+            log(f"{home.tag}: refresh failed ({e}) — trying existing token")
         if refreshed is not None and not isinstance(refreshed, dict):
-            log("codex: refresh returned an unexpected shape — trying existing token")
+            log(f"{home.tag}: refresh returned an unexpected shape — trying existing token")
             refreshed = None
 
         new_access = (refreshed or {}).get("access_token")
@@ -1019,32 +1097,32 @@ def codex_poll(now):
             # The server has rotated the credential by now, so the copy on disk is
             # spent. Everything below hangs on recording that.
             try:
-                codex_persist_rotation(refresh_token, new_access, refreshed.get("refresh_token"))
+                codex_persist_rotation(home, refresh_token, new_access, refreshed.get("refresh_token"))
             except CodexConcurrentRotation:
                 # Codex refreshed at the same moment and what it wrote is the live
                 # credential. Nothing is broken — pick that up and carry on.
-                stored = (load_json(CODEX_AUTH_FILE) or {}).get("tokens") or {}
+                stored = (load_json(home.auth_file) or {}).get("tokens") or {}
                 access = stored.get("access_token") or access
-                log("codex: credential was rotated by Codex mid-refresh — using the stored token")
+                log(f"{home.tag}: credential was rotated by Codex mid-refresh — using the stored token")
             except CodexPersistError as e:
-                codex_record_rotation_loss(refresh_token)
-                log(f"codex: token rotated but NOT saved ({e}) — the credential on disk "
+                codex_record_rotation_loss(home, refresh_token)
+                log(f"{home.tag}: token rotated but NOT saved ({e}) — the credential on disk "
                     "is now invalid; run `codex login` to recover")
-                codex_recover("the rotated credential could not be saved", now)
+                codex_recover(home, "the rotated credential could not be saved", now)
                 return
             else:
                 access = new_access
-                log("codex: token refreshed")
+                log(f"{home.tag}: token refreshed")
 
     headers = {"Authorization": f"Bearer {access}"}
     if account_id:
         headers["ChatGPT-Account-Id"] = account_id
-    ok, body = fetch_usage(CODEX_USAGE_URL, headers, codex_recover, now)
+    ok, body = fetch_usage(CODEX_USAGE_URL, headers, functools.partial(codex_recover, home), now)
     if not ok:
         return
 
-    publish("codex", "usage response", CODEX_CARD, CODEX_READING,
-            codex_reading(body, codex_plan_label(body.get("plan_type")), now), now)
+    publish("codex", "usage response", home.card, home.reading,
+            codex_reading(body, codex_plan_label(body.get("plan_type")), now), now, home.name)
 
 
 # ----------------------------- main -----------------------------
@@ -1056,7 +1134,10 @@ def main():
     # timestamps (log lines, last_refresh, the rotation-loss marker) read the
     # real wall clock via stamp() instead — see decision 3 of the design.
     now = datetime.now(timezone.utc).timestamp()
-    for name, fn in (("claude", claude_poll), ("codex", codex_poll)):
+    polls = [("claude", claude_poll)]
+    polls += [(home.tag, functools.partial(codex_poll, home)) for home in codex_homes()]
+    # One login failing must not cost the others their Card.
+    for name, fn in polls:
         try:
             fn(now)
         except Exception as e:

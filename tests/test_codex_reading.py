@@ -79,10 +79,7 @@ class CodexCase(unittest.TestCase):
         self.reading_path = home / "runcat-reading.json"
         self.logs = []
 
-        self.patch("CODEX_AUTH_FILE", self.auth_path)
-        self.patch("CODEX_CARD", self.card_path)
-        self.patch("CODEX_READING", self.reading_path)
-        self.patch("CODEX_ROTATION_LOST", home / "runcat-rotation-lost.json")
+        self.home = mod.CodexHome(home)
         self.patch("log", self.logs.append)
         mod.interface_lang.cache_clear()
         self.addCleanup(mod.interface_lang.cache_clear)
@@ -114,7 +111,7 @@ class CodexCase(unittest.TestCase):
             return 200, response
 
         self.patch("http_get_json", fetch)
-        mod.codex_poll(now)
+        mod.codex_poll(self.home, now)
 
     def reading(self, response=RESPONSE, now=None):
         return mod.codex_reading(response, mod.codex_plan_label(response.get("plan_type")),
@@ -317,7 +314,7 @@ class CodexRecoveryTest(CodexCase):
 
     def test_a_lost_rotation_recovers_rather_than_leaving_the_card_frozen(self):
         self.poll(both_windows())
-        mod.codex_record_rotation_loss("refresh")
+        mod.codex_record_rotation_loss(self.home, "refresh")
 
         self.poll(now=NOW + 3 * HOUR)
 

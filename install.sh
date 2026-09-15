@@ -14,6 +14,19 @@ if [ -z "$PY" ]; then
   exit 1
 fi
 
+# launchd starts the poller without a login shell, so settings exported when
+# installing are written into the agent itself.
+ENV_XML=""
+for key in RUNCAT_CODEX_HOMES RUNCAT_LANG; do
+  value="${!key:-}"
+  [ -n "$value" ] || continue
+  value="${value//&/&amp;}"; value="${value//</&lt;}"; value="${value//>/&gt;}"
+  ENV_XML="$ENV_XML    <key>$key</key><string>$value</string>"$'\n'
+done
+if [ -n "$ENV_XML" ]; then
+  ENV_XML="  <key>EnvironmentVariables</key>"$'\n'"  <dict>"$'\n'"$ENV_XML  </dict>"
+fi
+
 mkdir -p "$HOME/Library/LaunchAgents"
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -32,6 +45,7 @@ cat > "$PLIST" <<EOF
   <key>LowPriorityIO</key><true/>
   <key>StandardOutPath</key><string>$DIR/runcat-poll.log</string>
   <key>StandardErrorPath</key><string>$DIR/runcat-poll.log</string>
+$ENV_XML
 </dict>
 </plist>
 EOF
@@ -44,4 +58,12 @@ echo "Installed launchd agent: $LABEL (every ${INTERVAL}s)"
 echo
 echo "Next: RunCat Neo -> Settings -> Metrics -> Custom Metrics -> Add Custom Metrics Source"
 echo "  ~/.claude/runcat-usage.json   (Claude Code)"
-echo "  ~/.codex/runcat-usage.json    (Codex)"
+if [ -n "${RUNCAT_CODEX_HOMES:-}" ]; then
+  IFS=',' read -ra CODEX_HOMES <<< "$RUNCAT_CODEX_HOMES"
+  for home in "${CODEX_HOMES[@]}"; do
+    home="$(echo "$home" | xargs)"
+    [ -n "$home" ] && echo "  ${home%/}/runcat-usage.json   (Codex)"
+  done
+else
+  echo "  ~/.codex/runcat-usage.json    (Codex)"
+fi
