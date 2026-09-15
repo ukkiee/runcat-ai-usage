@@ -12,9 +12,9 @@ Designed to run on a launchd interval (every ~5 min).
 
 Card shape:
 - title carries the plan, e.g. "Claude Code Max 20x" / "Codex Pro Lite".
-- each rate-limit window is two rows: the used% (with the bar) and, underneath
-  it, a bar-less "reset in <time>" line so the countdown isn't cramped next to
-  the percentage. Windows are "Session" (5h) and "Weekly" (7d).
+- each rate-limit window is two rows: the share still left (with the bar) and,
+  underneath it, a bar-less "reset in <time>" line so the countdown isn't cramped
+  next to the percentage. Windows are "Session" (5h) and "Weekly" (7d).
 
 Claude's response becomes a Usage Reading first — every Window with a stable
 identity, a bounded used share and a Reset we can believe — and the Card is
@@ -94,6 +94,7 @@ STRINGS = {
         "session": "현재 세션",
         "weekly": "주간 한도",
         "reset": "재설정",
+        "left": "{share} 남음",
         "days": "{days}일 {hours}시간",
         "hours": "{hours}시간 {minutes}분",
         "minutes": "{minutes}분",
@@ -104,6 +105,7 @@ STRINGS = {
         "session": "Session",
         "weekly": "Weekly",
         "reset": "reset",
+        "left": "{share} left",
         "days": "{days}d {hours}h",
         "hours": "{hours}h {minutes}m",
         "minutes": "{minutes}m",
@@ -476,16 +478,26 @@ def window_title(window, labels):
     return labels.get(window.id) or window.label or window.id
 
 
+def left_share(used):
+    """The share of a Window still left, 0–100, from the used share the Reading
+    records. Rounded so a float subtraction never reaches the Card as 87.30000001."""
+    return round(100.0 - max(0.0, min(float(used), 100.0)), 4)
+
+
 def window_rows(title, used, resets_at_epoch, labels, now):
-    """A window's used% row (with bar) plus a bar-less 'reset in <time>' row.
+    """A window's share-left row (with bar) plus a bar-less 'reset in <time>' row.
+
+    The Reading keeps the used share; only the Card turns it around, so a Stale
+    Reading written before the Card showed what is left still renders correctly.
 
     A Reset that has already passed gets no countdown at all: we genuinely do not
     know the next one, because Claude states no window length to extrapolate from.
     """
     if not isinstance(used, (int, float)):
         return []
-    v = max(0.0, min(float(used), 100.0))
-    rows = [{"title": title, "formattedValue": f"{v:g}%", "normalizedValue": round(v / 100, 4)}]
+    left = left_share(used)
+    rows = [{"title": title, "formattedValue": labels["left"].format(share=f"{left:g}%"),
+             "normalizedValue": round(left / 100, 4)}]
     if isinstance(resets_at_epoch, (int, float)) and resets_at_epoch - now > 0:
         dur = fmt_duration(resets_at_epoch - now, labels)
         rows.append({"title": labels["reset"],
@@ -508,10 +520,11 @@ def join_blocks(blocks):
     return metrics
 
 
-def bar_two(*pcts):
-    """Menu-bar text from up to two percentages, single line (RunCat's menu-bar
-    view is single-line; a newline just gets truncated). e.g. '18% · 39%'."""
-    parts = [f"{p:g}%" for p in pcts if isinstance(p, (int, float))]
+def bar_two(*used):
+    """Menu-bar text from up to two used shares, shown as what is left, single line
+    (RunCat's menu-bar view is single-line; a newline just gets truncated).
+    e.g. used 18 and 39 -> '82% · 61%'."""
+    parts = [f"{left_share(u):g}%" for u in used if isinstance(u, (int, float))]
     return " · ".join(parts) if parts else None
 
 
@@ -522,10 +535,10 @@ def card_title(provider, plan):
 
 def finalize(title, symbol, metrics, bar_value, now):
     """Assemble a Card. bar_value = menu-bar text; None falls back to the single
-    most-used window percentage."""
+    window with the least left."""
     rows = [m for m in metrics if m is not None]
     if bar_value is None:
-        bar = max((m["normalizedValue"] for m in rows if "normalizedValue" in m), default=None)
+        bar = min((m["normalizedValue"] for m in rows if "normalizedValue" in m), default=None)
         bar_value = f"{bar * 100:g}%" if bar is not None else None
     card = {"title": title, "symbol": symbol, "metrics": rows, "lastUpdatedDate": epoch_to_iso(now)}
     if bar_value is not None:

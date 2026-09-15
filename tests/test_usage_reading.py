@@ -8,7 +8,8 @@ handed in rather than read from module state.
 These tests pin both halves: what the mapping keeps, and that the rendering
 still produces exactly the Card the poller wrote before the change. The fixtures
 are real — `LIVE_CARD` is the Card observed in `~/.claude/runcat-usage.json`,
-and `NOW` is the moment it was written.
+and `NOW` is the moment it was written. Since the Card turned to showing what is
+left, its shares read as 100 minus the ones observed.
 """
 
 import subprocess
@@ -45,15 +46,15 @@ LIVE_CARD = {
     "title": "Claude Code Max 20x",
     "symbol": "staroflife",
     "metrics": [
-        {"title": "현재 세션", "formattedValue": "47%", "normalizedValue": 0.47},
+        {"title": "현재 세션", "formattedValue": "53% 남음", "normalizedValue": 0.53},
         {"title": "재설정", "formattedValue": "2시간 2분 후\n"},
-        {"title": "주간 한도", "formattedValue": "77%", "normalizedValue": 0.77},
+        {"title": "주간 한도", "formattedValue": "23% 남음", "normalizedValue": 0.23},
         {"title": "재설정", "formattedValue": "3일 10시간 후\n"},
-        {"title": "Fable", "formattedValue": "66%", "normalizedValue": 0.66},
+        {"title": "Fable", "formattedValue": "34% 남음", "normalizedValue": 0.34},
         {"title": "재설정", "formattedValue": "3일 10시간 후"},
     ],
     "lastUpdatedDate": "2026-07-23T08:17:25Z",
-    "metricsBarValue": "47% · 77%",
+    "metricsBarValue": "53% · 23%",
 }
 
 
@@ -330,9 +331,9 @@ class ClaudeCardTest(ReadingCase):
 
         self.assertEqual(
             [(row["title"], row["formattedValue"]) for row in card["metrics"]],
-            [("Session", "47%"), ("reset", "2h 2m\n"),
-             ("Weekly", "77%"), ("reset", "3d 10h\n"),
-             ("Fable", "66%"), ("reset", "3d 10h")],
+            [("Session", "53% left"), ("reset", "2h 2m\n"),
+             ("Weekly", "23% left"), ("reset", "3d 10h\n"),
+             ("Fable", "34% left"), ("reset", "3d 10h")],
         )
 
     def test_the_language_moves_the_labels_and_nothing_else(self):
@@ -363,7 +364,35 @@ class ClaudeCardTest(ReadingCase):
         self.assertFalse(metrics[5]["formattedValue"].endswith("\n"))
 
     def test_the_menu_bar_carries_the_session_and_weekly_windows(self):
-        self.assertEqual(self.render()["metricsBarValue"], "47% · 77%")
+        self.assertEqual(self.render()["metricsBarValue"], "53% · 23%")
+
+    def test_the_card_shows_what_is_left_while_the_reading_keeps_what_was_used(self):
+        """Only the Card turns the share around. The Reading stays on the used
+        share, so a Stale Reading persisted before this change still decays and
+        renders correctly."""
+        reading = self.one_window(percent=47)
+
+        card = mod.render_card(reading, mod.label_set("ko"), NOW)
+
+        self.assertEqual(reading.windows[0].used, 47.0)
+        self.assertEqual(card["metrics"][0]["formattedValue"], "53% 남음")
+        self.assertEqual(card["metrics"][0]["normalizedValue"], 0.53)
+
+    def test_a_fractional_share_left_carries_no_float_noise(self):
+        card = mod.render_card(self.one_window(percent=12.7), mod.label_set("en"), NOW)
+
+        self.assertEqual(card["metrics"][0]["formattedValue"], "87.3% left")
+
+    def test_without_session_or_weekly_the_menu_bar_shows_the_window_with_the_least_left(self):
+        reading = mod.UsageReading(
+            provider="claude", plan="Max 20x", captured_at=NOW,
+            windows=(mod.Window(id=mod.scoped_window_id("Fable"), used=66.0, label="Fable"),
+                     mod.Window(id=mod.scoped_window_id("Opus"), used=80.0, label="Opus")),
+        )
+
+        card = mod.render_card(reading, mod.label_set("ko"), NOW)
+
+        self.assertEqual(card["metricsBarValue"], "20%")
 
     def test_the_clock_that_is_handed_in_is_the_one_that_is_used(self):
         later = NOW + 3600

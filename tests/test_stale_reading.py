@@ -260,7 +260,7 @@ class CarryForwardTest(StaleReadingCase):
 
         self.poll(http_fails=True, now=SESSION_RESET + HOUR)
 
-        self.assertEqual(self.rows()[0], ("현재 세션", "0%\n"))
+        self.assertEqual(self.rows()[0], ("현재 세션", "100% 남음\n"))
 
     def test_a_carried_reset_that_has_already_passed_is_not_carried(self):
         """A Reset that has passed says nothing about the next one, and carrying it
@@ -299,9 +299,9 @@ class LegacyShapeTest(StaleReadingCase):
         self.poll(self.legacy())
 
         self.assertEqual(self.rows(), [
-            ("현재 세션", "47%"),
+            ("현재 세션", "53% 남음"),
             ("재설정", "2시간 2분 후\n"),
-            ("주간 한도", "77%"),
+            ("주간 한도", "23% 남음"),
             ("재설정", "3일 10시간 후"),
         ])
 
@@ -336,10 +336,10 @@ class RecoveryTest(StaleReadingCase):
 
         self.assertEqual(self.rows(), [
             # The decayed Window loses its countdown and takes over the spacer.
-            ("현재 세션", "0%\n"),
-            ("주간 한도", "77%"),
+            ("현재 세션", "100% 남음\n"),
+            ("주간 한도", "23% 남음"),
             ("재설정", "3일 7시간 후\n"),
-            ("Fable", "66%"),
+            ("Fable", "34% 남음"),
             ("재설정", "3일 7시간 후"),
         ])
 
@@ -363,8 +363,8 @@ class RecoveryTest(StaleReadingCase):
 
         self.poll(http_fails=True, now=SESSION_RESET + HOUR)
 
-        self.assertEqual(self.rows()[0], ("Session", "0%\n"))
-        self.assertEqual(self.rows()[1], ("Weekly", "77%"))
+        self.assertEqual(self.rows()[0], ("Session", "100% left\n"))
+        self.assertEqual(self.rows()[1], ("Weekly", "23% left"))
 
     def test_recovery_keeps_counting_down_the_windows_that_have_not_reset(self):
         self.poll()
@@ -378,7 +378,7 @@ class RecoveryTest(StaleReadingCase):
 
         self.poll(token_expired=True, now=SESSION_RESET + HOUR)
 
-        self.assertEqual(self.rows()[0], ("현재 세션", "0%\n"))
+        self.assertEqual(self.rows()[0], ("현재 세션", "100% 남음\n"))
 
     def test_recovery_without_a_reading_leaves_the_published_card_alone(self):
         self.poll()

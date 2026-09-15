@@ -45,5 +45,5 @@ A Usage Reading we could not replace because the Provider was unreachable or its
 _Avoid_: fallback, cached usage, last-good
 
 **Card**:
-What RunCat Neo shows for one Provider — the rendered presentation of a Usage Reading, plus the short text in the menu bar.
+What RunCat Neo shows for one Provider — the rendered presentation of a Usage Reading, plus the short text in the menu bar. A Card shows the share of each Window that is left; the Usage Reading keeps the share that was used.
 _Avoid_: snapshot, widget, tile, dashboard entry

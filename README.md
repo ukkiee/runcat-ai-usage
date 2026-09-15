@@ -2,19 +2,19 @@
 
 **English** | [한국어](README.ko.md)
 
-Show your **Claude Code** and **Codex** usage — session / weekly / per-model limits with reset countdowns — as a [RunCat Neo](https://github.com/runcat-dev/RunCatNeo) dashboard card and menu-bar meter.
+Show how much of your **Claude Code** and **Codex** limits is left — session / weekly / per-model limits with reset countdowns — as a [RunCat Neo](https://github.com/runcat-dev/RunCatNeo) dashboard card and menu-bar meter.
 
 ```
-Claude Code Max 20x            menu bar: 45% · 45%
-  Session: 45%
+Claude Code Max 20x            menu bar: 55% · 55%
+  Session: 55% left
   ▓▓▓▓▓░░░░░
   reset: 1h 53m
 
-  Weekly: 45%
+  Weekly: 55% left
   ▓▓▓▓▓░░░░░
   reset: 4d 9h
 
-  Fable: 45%
+  Fable: 55% left
   ▓▓▓▓▓░░░░░
   reset: 4d 9h
 ```
@@ -80,14 +80,14 @@ Environment variables (set them in the `launchd` plist that `install.sh` writes,
 
 Card labels and plan names live at the top of `runcat_poll.py` (the implementation beside the entry point):
 
-- `STRINGS` — every display string per language: the `session` / `weekly` / `reset` row labels and the countdown wording. It holds no window identities, so translating a card changes labels only.
+- `STRINGS` — every display string per language: the `session` / `weekly` / `reset` row labels, the `left` share wording and the countdown wording. It holds no window identities, so translating a card changes labels only.
 - `CODEX_PLAN_LABELS` — maps Codex `plan_type` to a display name (e.g. `prolite → "Pro 5x"`, `pro → "Pro 20x"`).
 - Claude's plan (`Max 20x`, …) is derived automatically from its rate-limit tier.
 - The per-model weekly cap uses the model's own name (e.g. `Fable`), so it follows whatever model your plan currently scopes.
 
 ## Auth & safety
 
-- **Claude — read-only.** The access token is only *read* — from the Keychain, or from `~/.claude/.credentials.json` on a machine where Claude Code stores it there; **neither store is ever written**. An unsigned script can't do an ACL-preserving `SecItemUpdate` the way the signed apps do, and a coarse `security -U` write could lock Claude Code out of its own credential — so this tool refuses to refresh the Claude token. While the token is valid (i.e. you've used Claude recently) it polls live usage; once it expires it stops polling and instead rebuilds the card from the usage reading kept on the last successful poll (`~/.claude/runcat-reading.json`), zeroing any window whose reset time has passed since, until Claude Code refreshes its own token on your next use.
+- **Claude — read-only.** The access token is only *read* — from the Keychain, or from `~/.claude/.credentials.json` on a machine where Claude Code stores it there; **neither store is ever written**. An unsigned script can't do an ACL-preserving `SecItemUpdate` the way the signed apps do, and a coarse `security -U` write could lock Claude Code out of its own credential — so this tool refuses to refresh the Claude token. While the token is valid (i.e. you've used Claude recently) it polls live usage; once it expires it stops polling and instead rebuilds the card from the usage reading kept on the last successful poll (`~/.claude/runcat-reading.json`), showing any window whose reset time has passed since as fully left, until Claude Code refreshes its own token on your next use.
 - **Codex — file-based.** If the `~/.codex/auth.json` token is near expiry it is refreshed via the standard OAuth endpoint and written back to that file (the same mechanism Codex uses). Codex tokens are long-lived, so this is rare.
 - No credentials or tokens are ever printed, stored elsewhere, or sent anywhere except the provider's own usage endpoint.
 
@@ -95,7 +95,7 @@ Card labels and plan names live at the top of `runcat_poll.py` (the implementati
 
 - The usage endpoints are **undocumented/internal** (used by the official clients). They can change without notice, in which case this tool — and `openusage` — would need updating.
 - Values reflect **this machine's** tokens. Usage from another device is picked up on the next successful poll here.
-- Reset countdowns are text refreshed every poll (up to `RUNCAT_POLL_INTERVAL` stale), not a live-ticking timer. RunCat's menu bar is a single line, so the two menu-bar percentages are shown side by side (`45% · 45%`), not stacked.
+- Reset countdowns are text refreshed every poll (up to `RUNCAT_POLL_INTERVAL` stale), not a live-ticking timer. RunCat's menu bar is a single line, so the two menu-bar percentages are shown side by side (`55% · 55%`), not stacked.
 
 ## License
 
