@@ -549,19 +549,28 @@ def window_rows(title, used, resets_at_epoch, labels, now):
 
 def join_blocks(blocks):
     """Concatenate per-window row groups with a blank line after each one, so the
-    Windows stand apart from each other and the last one stands apart from the
-    'last updated' line RunCat Neo draws under the rows. RunCat has no spacer row,
-    so the blank line is a trailing newline on a group's last value — the spacing
-    rides on a row's value, never on its title, and rendering a Card is the only
-    thing that knows that. A group with no rows takes no spacer."""
+    blocks stand apart from each other and the last one stands apart from the
+    'last updated' line RunCat Neo draws under the rows.
+
+    RunCat has no spacer row, so the blank line is a newline smuggled into a
+    row's text. It normally trails the block's last value. RunCat draws a row's
+    bar under its text, though, so on a row with a bar that newline would open
+    a gap between the text and its own bar; such a block hands the blank line
+    to the next block, as a newline in front of its first title. The last
+    block has no next block, so a bar there sits right on the footer. A group
+    with no rows takes no spacer."""
     metrics = []
+    owed = False
     for rows in blocks:
         if not rows:
             continue
-        last = dict(rows[-1])
-        last["formattedValue"] = last["formattedValue"] + "\n"
-        metrics.extend(rows[:-1])
-        metrics.append(last)
+        rows = [dict(row) for row in rows]
+        if owed:
+            rows[0]["title"] = "\n" + rows[0]["title"]
+        owed = "normalizedValue" in rows[-1]
+        if not owed:
+            rows[-1]["formattedValue"] += "\n"
+        metrics.extend(rows)
     return metrics
 
 

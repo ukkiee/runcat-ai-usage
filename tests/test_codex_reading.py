@@ -210,7 +210,7 @@ class CodexResetValidationTest(CodexCase):
 
         self.poll(http_fails=True, now=NOW + 10 * DAY)
 
-        self.assertEqual(self.rows()[0], ("현재 세션", "53% 남음\n"),
+        self.assertEqual(self.rows()[0], ("현재 세션", "53% 남음"),
                          "a Window with no believable Reset must never decay")
 
 
@@ -257,8 +257,8 @@ class CodexRecoveryTest(CodexCase):
         self.poll(http_fails=True, now=NOW + 3 * HOUR)
 
         self.assertEqual(self.rows(), [
-            ("현재 세션", "100% 남음\n"),
-            ("주간 한도", "87% 남음"),
+            ("현재 세션", "100% 남음"),
+            ("\n주간 한도", "87% 남음"),
             ("재설정", "5일 9시간 후 · 수 09:06\n"),
         ])
 
@@ -268,7 +268,7 @@ class CodexRecoveryTest(CodexCase):
 
         self.poll(http_fails=True, now=NOW + 3 * HOUR)
 
-        self.assertEqual(self.rows()[0], ("Session", "100% left\n"))
+        self.assertEqual(self.rows()[0], ("Session", "100% left"))
 
     def test_the_obsolete_reset_state_file_is_treated_as_absent(self):
         """It is `{label: epoch}` with no `windows`, so it can never be mistaken
@@ -314,7 +314,7 @@ class CodexRecoveryTest(CodexCase):
 
         self.poll(now=NOW + 3 * HOUR)
 
-        self.assertEqual(self.rows()[0], ("현재 세션", "100% 남음\n"))
+        self.assertEqual(self.rows()[0], ("현재 세션", "100% 남음"))
         self.assertIn("no access token", self.log_text)
 
     def test_a_lost_rotation_recovers_rather_than_leaving_the_card_frozen(self):
@@ -324,7 +324,7 @@ class CodexRecoveryTest(CodexCase):
         self.poll(now=NOW + 3 * HOUR)
 
         self.assertIn("codex login", self.log_text)
-        self.assertEqual(self.rows()[0], ("현재 세션", "100% 남음\n"))
+        self.assertEqual(self.rows()[0], ("현재 세션", "100% 남음"))
 
 
 if __name__ == "__main__":

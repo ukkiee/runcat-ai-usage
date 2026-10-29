@@ -368,6 +368,24 @@ class ClaudeCardTest(ReadingCase):
             self.assertTrue(row["formattedValue"].endswith("\n"))
             self.assertFalse(row["formattedValue"].endswith("\n\n"))
 
+    def test_a_blank_line_never_lands_between_a_rows_text_and_its_bar(self):
+        """RunCat draws a row's bar under its text, so a newline in the text of a
+        row with a bar opens a gap between the two. A Window with no countdown
+        ends on such a row; its blank line goes above the next Window instead."""
+        reading = mod.UsageReading(
+            provider="claude", plan="Max 20x", captured_at=NOW,
+            windows=(mod.Window(id=mod.SESSION_WINDOW, used=0.0),
+                     mod.Window(id=mod.WEEKLY_WINDOW, used=77.0, resets_at=WEEKLY_RESET)),
+        )
+
+        metrics = mod.render_card(reading, mod.label_set("ko"), NOW)["metrics"]
+
+        for row in metrics:
+            if "normalizedValue" in row:
+                self.assertNotIn("\n", row["formattedValue"])
+        self.assertEqual([(row["title"], row["formattedValue"]) for row in metrics[1:3]],
+                         [("현재 세션", "100% 남음"), ("\n주간 한도", "23% 남음")])
+
     def test_the_menu_bar_carries_the_session_and_weekly_windows(self):
         self.assertEqual(self.render()["metricsBarValue"], "53% · 23%")
 
