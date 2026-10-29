@@ -94,7 +94,7 @@ When you reinstall, pass every variable you set before (`RUNCAT_CLAUDE_HOMES`, `
 A per-model weekly limit such as `Fable` can be taken off every card and brought back with one command:
 
 ```sh
-python3 ~/path/to/runcat-ai-usage/runcat-poll.py toggle Fable   # hide; run again to show
+./toggle.sh Fable   # hide; run again to show
 ```
 
 The cards are redrawn from the last poll at once, without a network request. The choice is kept in `~/.config/runcat-ai-usage/settings.json`, and the poller keeps recording the hidden limit, so showing it again is instant too. Only per-model limits can be hidden; Session and Weekly always stay.

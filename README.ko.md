@@ -94,7 +94,7 @@ RunCat Neo에 `~/.claude-sub/runcat-usage.json`도 추가해야 하고, 카드 �
 `Fable` 같은 모델별 주간 한도는 명령 하나로 모든 카드에서 숨기고 다시 보이게 할 수 있습니다:
 
 ```sh
-python3 ~/path/to/runcat-ai-usage/runcat-poll.py toggle Fable   # 숨기기, 한 번 더 실행하면 다시 표시
+./toggle.sh Fable   # 숨기기, 한 번 더 실행하면 다시 표시
 ```
 
 네트워크 요청 없이 마지막 폴링 결과로 카드를 바로 다시 그립니다. 선택은 `~/.config/runcat-ai-usage/settings.json`에 저장되고, 숨긴 동안에도 폴러는 그 한도를 계속 기록하므로 다시 켤 때도 바로 나타납니다. 숨길 수 있는 건 모델별 한도뿐이고, 현재 세션과 주간 한도는 항상 표시됩니다.

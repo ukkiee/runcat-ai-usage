@@ -1,13 +1,16 @@
 """A model's Window can be left off every Card and brought back with one command.
 
-`runcat-poll.py toggle Fable` flips the model in a small settings file and asks
-the agent to poll at once. Only the Card changes: the Reading keeps the Window,
-so showing it again needs nothing but a render.
+`./toggle.sh Fable` (or `runcat-poll.py toggle Fable`) flips the model in a
+small settings file and redraws every Card from its stored Reading. Only the
+Card changes: the Reading keeps the Window, so showing it again needs nothing but
+a render.
 """
 
 import io
 import json
+import os
 import plistlib
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -173,6 +176,49 @@ class CommandTest(Case):
         _code, _out, polled = self.run_main()
 
         self.assertEqual(polled, ["poll"])
+
+
+class ScriptTest(unittest.TestCase):
+    """toggle.sh is the same toggle without typing the poller's path. It runs in a
+    throwaway HOME so the real settings and Cards are never touched."""
+
+    SCRIPT = Path(__file__).resolve().parent.parent / "toggle.sh"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name)
+        self.settings = self.home / ".config" / "runcat-ai-usage" / "settings.json"
+
+    def run_script(self, *args):
+        env = {k: v for k, v in os.environ.items() if not k.startswith("RUNCAT_")}
+        env["HOME"] = str(self.home)
+        return subprocess.run([str(self.SCRIPT), *args], cwd="/", env=env,
+                              capture_output=True, text=True, timeout=60)
+
+    def hidden(self):
+        return json.loads(self.settings.read_text(encoding="utf-8"))["hiddenModels"]
+
+    def test_the_script_hides_and_the_next_run_shows_again(self):
+        first = self.run_script("Fable")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn("Fable: hidden", first.stdout)
+        self.assertEqual(self.hidden(), ["Fable"])
+
+        second = self.run_script("Fable")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("Fable: shown", second.stdout)
+        self.assertEqual(self.hidden(), [])
+
+    def test_the_script_without_a_model_changes_nothing(self):
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("toggle.sh <model>", result.stderr)
+        self.assertFalse(self.settings.exists())
+
+    def test_the_script_is_executable(self):
+        self.assertTrue(self.SCRIPT.stat().st_mode & 0o111)
 
 
 if __name__ == "__main__":
