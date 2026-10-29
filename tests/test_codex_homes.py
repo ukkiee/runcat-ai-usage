@@ -67,6 +67,7 @@ class CodexHomesTest(unittest.TestCase):
         homes = self.homes(f"personal={self.user}/.codex,{self.user}/.codex2")
 
         self.assertEqual([home.account for home in homes], ["personal", "codex2"])
+        self.assertEqual([home.tag for home in homes], ["codex (personal)", "codex (codex2)"])
         self.assertEqual([home.root for home in homes], [self.user / ".codex", self.user / ".codex2"])
 
     def test_an_entry_with_a_label_but_no_path_is_ignored(self):
@@ -134,11 +135,11 @@ class TwoHomesPollTest(unittest.TestCase):
         self.assertEqual(self.card(self.first)["metrics"][1]["formattedValue"], "87% 남음")
         self.assertEqual(self.card(self.second)["metrics"][1]["formattedValue"], "10% 남음")
 
-    def test_only_a_home_other_than_the_default_names_itself_in_the_first_row(self):
+    def test_every_home_names_its_directory_in_the_first_row(self):
         self.poll_both()
 
         self.assertEqual(self.card(self.first)["metrics"][0],
-                         {"title": "플랜", "formattedValue": "Pro 5x\n"})
+                         {"title": "codex", "formattedValue": "Pro 5x\n"})
         self.assertEqual(self.card(self.second)["metrics"][0],
                          {"title": "codex2", "formattedValue": "Pro 5x\n"})
 

@@ -83,6 +83,12 @@ class ClaudeHomesTest(Patching):
         self.assertEqual(homes[1].keychain_service,
                          mod.ClaudeHome(self.user / ".claude-sub", "claude-sub").keychain_service)
 
+    def test_the_default_home_is_named_after_its_directory_too(self):
+        home = self.homes(None)[0]
+
+        self.assertEqual((home.account, home.tag), ("claude", "claude (claude)"))
+        self.assertEqual(self.homes(f"{self.user}/.claude-sub")[0].tag, "claude (claude-sub)")
+
     def test_everything_a_home_keeps_sits_inside_it(self):
         home = mod.ClaudeHome(self.user / ".claude-sub", "claude-sub")
 
@@ -173,13 +179,13 @@ class TwoHomesPollTest(Patching):
         weekly = [self.card(home)["metrics"][3]["formattedValue"] for home in (self.first, self.second)]
         self.assertEqual(weekly, ["87% 남음", "10% 남음"])
 
-    def test_only_a_home_other_than_the_default_names_itself_in_the_first_row(self):
+    def test_every_home_names_its_directory_in_the_first_row(self):
         self.poll_both()
 
         self.assertEqual([self.card(home)["title"] for home in (self.first, self.second)],
                          ["Claude", "Claude"])
         self.assertEqual(self.card(self.first)["metrics"][0],
-                         {"title": "플랜", "formattedValue": "Max 20x\n"})
+                         {"title": "claude", "formattedValue": "Max 20x\n"})
         self.assertEqual(self.card(self.second)["metrics"][0],
                          {"title": "claude-sub", "formattedValue": "Max 20x\n"})
 

@@ -43,7 +43,7 @@ LIVE_CARD = {
     "title": "Codex",
     "symbol": "camera.aperture",
     "metrics": [
-        {"title": "플랜", "formattedValue": "Pro 5x\n"},
+        {"title": "codex", "formattedValue": "Pro 5x\n"},
         {"title": "주간 한도", "formattedValue": "87% 남음", "normalizedValue": 0.87},
         {"title": "재설정", "formattedValue": "5일 12시간 후 · 수 09:06\n"},
     ],
@@ -72,7 +72,8 @@ class CodexCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        home = Path(self.tmp.name)
+        home = Path(self.tmp.name) / ".codex"
+        home.mkdir()
 
         self.auth_path = home / "auth.json"
         self.auth_path.write_text(json.dumps(AUTH), encoding="utf-8")

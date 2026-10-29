@@ -6,7 +6,7 @@ Show how much of your **Claude Code** and **Codex** limits is left — session /
 
 ```
 Claude                         menu bar: 55% · 55%
-  Plan: Max 20x
+  claude: Max 20x
 
   Session: 55% left
   ▓▓▓▓▓░░░░░
@@ -83,9 +83,9 @@ If you run a second Claude Code login with its own config directory (e.g. `CLAUD
 RUNCAT_CLAUDE_HOMES="~/.claude,~/.claude-sub" ./install.sh
 ```
 
-Add `~/.claude-sub/runcat-usage.json` in RunCat Neo as well; its card's first row reads `claude-sub: Max 20x` (the default home's reads `Plan: Max 20x`). Claude Code stores that login in a Keychain item named after a hash of the directory path (`Claude Code-credentials-<8 hex>`), so `CLAUDE_CONFIG_DIR` must be the plain absolute path: no trailing slash, and not reached through a symlink, or the poller looks for an item that does not exist. As with the default login, the card stays live only while that login's token is valid, which means using that account within roughly the last hour.
+Add `~/.claude-sub/runcat-usage.json` in RunCat Neo as well; its card's first row reads `claude-sub: Max 20x`. Claude Code stores that login in a Keychain item named after a hash of the directory path (`Claude Code-credentials-<8 hex>`), so `CLAUDE_CONFIG_DIR` must be the plain absolute path: no trailing slash, and not reached through a symlink, or the poller looks for an item that does not exist. As with the default login, the card stays live only while that login's token is valid, which means using that account within roughly the last hour.
 
-Every card's first row names its home after the directory, and the default home's reads `Plan: Max 20x`. To name a home yourself, write `label=path`, e.g. `RUNCAT_CLAUDE_HOMES="personal=~/.claude,~/.claude-sub"` gives `personal: Max 20x`. The label only changes what the card shows; the Keychain item is still found from the path.
+Every card's first row names its home after its directory (`claude: Max 20x`, `claude-sub: Max 20x`). To name a home yourself, write `label=path`, e.g. `RUNCAT_CLAUDE_HOMES="personal=~/.claude,~/.claude-sub"` gives `personal: Max 20x`. The label only changes what the card shows; the Keychain item is still found from the path.
 
 When you reinstall, pass every variable you set before (`RUNCAT_CLAUDE_HOMES`, `RUNCAT_CODEX_HOMES`) again, since `install.sh` rewrites the agent from scratch.
 

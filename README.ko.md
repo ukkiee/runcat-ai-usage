@@ -6,7 +6,7 @@
 
 ```
 Claude                         메뉴바: 55% · 55%
-  플랜: Max 20x
+  claude: Max 20x
 
   현재 세션: 55% 남음
   ▓▓▓▓▓░░░░░
@@ -83,9 +83,9 @@ RUNCAT_CODEX_HOMES="~/.codex,~/.codex2" ./install.sh
 RUNCAT_CLAUDE_HOMES="~/.claude,~/.claude-sub" ./install.sh
 ```
 
-RunCat Neo에 `~/.claude-sub/runcat-usage.json`도 추가해야 하고, 카드 첫 행은 `claude-sub: Max 20x`가 됩니다(기본 홈은 `플랜: Max 20x`). Claude Code는 이 로그인을 디렉터리 경로의 해시가 붙은 키체인 항목(`Claude Code-credentials-<16진수 8자리>`)에 저장합니다. 그래서 `CLAUDE_CONFIG_DIR`은 끝에 `/` 없이, 심링크를 거치지 않은 절대 경로여야 합니다. 그렇지 않으면 폴러가 존재하지 않는 항목을 찾게 됩니다. 기본 로그인과 마찬가지로, 그 계정을 대략 최근 1시간 안에 써서 토큰이 유효할 때만 실측값이 표시됩니다.
+RunCat Neo에 `~/.claude-sub/runcat-usage.json`도 추가해야 하고, 카드 첫 행은 `claude-sub: Max 20x`가 됩니다. Claude Code는 이 로그인을 디렉터리 경로의 해시가 붙은 키체인 항목(`Claude Code-credentials-<16진수 8자리>`)에 저장합니다. 그래서 `CLAUDE_CONFIG_DIR`은 끝에 `/` 없이, 심링크를 거치지 않은 절대 경로여야 합니다. 그렇지 않으면 폴러가 존재하지 않는 항목을 찾게 됩니다. 기본 로그인과 마찬가지로, 그 계정을 대략 최근 1시간 안에 써서 토큰이 유효할 때만 실측값이 표시됩니다.
 
-카드 첫 행에는 디렉터리 이름이 붙고, 기본 홈은 `플랜: Max 20x`로 표시됩니다. 이름을 직접 정하려면 `이름=경로`로 적습니다. 예를 들어 `RUNCAT_CLAUDE_HOMES="personal=~/.claude,~/.claude-sub"`이면 `personal: Max 20x`가 됩니다. 이름은 카드 표시만 바꾸고, 키체인 항목은 여전히 경로로 찾습니다.
+카드 첫 행에는 디렉터리 이름이 붙습니다(`claude: Max 20x`, `claude-sub: Max 20x`). 이름을 직접 정하려면 `이름=경로`로 적습니다. 예를 들어 `RUNCAT_CLAUDE_HOMES="personal=~/.claude,~/.claude-sub"`이면 `personal: Max 20x`가 됩니다. 이름은 카드 표시만 바꾸고, 키체인 항목은 여전히 경로로 찾습니다.
 
 다시 설치할 때는 예전에 지정한 변수(`RUNCAT_CLAUDE_HOMES`, `RUNCAT_CODEX_HOMES`)를 모두 다시 넘기세요. `install.sh`가 에이전트를 처음부터 새로 쓰기 때문입니다.
 

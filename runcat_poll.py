@@ -12,8 +12,8 @@ Designed to run on a launchd interval (every ~5 min).
 
 Card shape:
 - title is the Provider's name ("Claude", "Codex"). The first row names the
-  account and its plan: "claude-sub: Max 20x" for any home other than the
-  default one, "플랜: Max 20x" for the default home.
+  account after its directory, and its plan: "claude: Max 20x",
+  "claude-sub: Max 20x".
 - each rate-limit window is two rows: the share still left (with the bar) and,
   underneath it, a bar-less reset line carrying both the countdown and the local
   wall-clock moment ("16분 후 · 12:10", "3일 16시간 후 · 월 04:00"), so the
@@ -583,8 +583,8 @@ def bar_two(*used):
 
 
 def account_rows(plan, account, labels):
-    """The row under the title that says which login this is and on what Plan:
-    'claude-sub: Max 20x', or 'Plan: Max 20x' for the default login.
+    """The row under the title that says which login this is and on what Plan,
+    named after its directory: 'claude: Max 20x', 'claude-sub: Max 20x'.
 
     It is a row rather than a second title line because rows are drawn in
     RunCat's smaller caption font, so it reads as a subtitle. RunCat offers no
@@ -753,7 +753,7 @@ class ClaudeHome:
     Each home is a separate account, so its Card and Reading sit inside that
     directory and never beside another home's. `name` is empty for ~/.claude
     and is what tells the Keychain item apart; any other home is named after
-    its directory ('~/.claude-sub' -> 'claude-sub'). `label` is the name the
+    its directory ('~/.claude-sub' -> 'claude-sub'). `label` is a name the
     user gave it in RUNCAT_CLAUDE_HOMES ('personal=~/.claude'), and wins
     wherever the account is shown.
     """
@@ -764,7 +764,9 @@ class ClaudeHome:
 
     @property
     def account(self):
-        return self.label or self.name
+        """What the Card and the log call this login: its label, else its
+        directory name ('~/.claude' -> 'claude')."""
+        return self.label or self.name or self.root.name.lstrip(".") or str(self.root)
 
     @property
     def keychain_service(self):
@@ -997,7 +999,9 @@ class CodexHome:
 
     @property
     def account(self):
-        return self.label or self.name
+        """What the Card and the log call this login: its label, else its
+        directory name ('~/.claude' -> 'claude')."""
+        return self.label or self.name or self.root.name.lstrip(".") or str(self.root)
 
     @property
     def auth_file(self):
