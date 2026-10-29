@@ -99,7 +99,11 @@ class StaleReadingCase(unittest.TestCase):
         return json.loads(self.card_path.read_text(encoding="utf-8"))
 
     def rows(self):
-        return [(row["title"], row["formattedValue"]) for row in self.card()["metrics"]]
+        """The Window rows. The first row names the account and its Plan and is
+        pinned elsewhere; these tests are about the Windows under it."""
+        account, *windows = self.card()["metrics"]
+        self.assertNotIn("normalizedValue", account)
+        return [(row["title"], row["formattedValue"]) for row in windows]
 
     def stored(self):
         return json.loads(self.reading_path.read_text(encoding="utf-8"))

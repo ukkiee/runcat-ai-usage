@@ -11,9 +11,9 @@ cost) to write real, account-wide rate-limit numbers into the RunCat Neo Cards.
 Designed to run on a launchd interval (every ~5 min).
 
 Card shape:
-- title is the Provider's name, with a second line under it naming the home
-  (for any home other than the default one) and the plan:
-  "Claude" / "claude-sub · Max 20x", "Codex" / "Pro 20x".
+- title is the Provider's name ("Claude", "Codex"). The first row names the
+  account and its plan: "claude-sub: Max 20x" for any home other than the
+  default one, "플랜: Max 20x" for the default home.
 - each rate-limit window is two rows: the share still left (with the bar) and,
   underneath it, a bar-less reset line carrying both the countdown and the local
   wall-clock moment ("16분 후 · 12:10", "3일 16시간 후 · 월 04:00"), so the
@@ -104,6 +104,8 @@ STRINGS = {
         "session": "현재 세션",
         "weekly": "주간 한도",
         "reset": "재설정",
+        "plan": "플랜",
+        "account": "계정",
         "left": "{share} 남음",
         "days": "{days}일 {hours}시간",
         "hours": "{hours}시간 {minutes}분",
@@ -118,6 +120,8 @@ STRINGS = {
         "session": "Session",
         "weekly": "Weekly",
         "reset": "reset",
+        "plan": "Plan",
+        "account": "Account",
         "left": "{share} left",
         "days": "{days}d {hours}h",
         "hours": "{hours}h {minutes}m",
@@ -569,16 +573,17 @@ def bar_two(*used):
     return " · ".join(parts) if parts else None
 
 
-def card_title(provider, plan, account=""):
-    """The Provider's name, with a second line under it naming the account and
-    the Plan: 'Claude' / 'claude-sub · Max 20x'. The default login has no
-    account name, so its second line is the Plan alone.
+def account_rows(plan, account, labels):
+    """The row under the title that says which login this is and on what Plan:
+    'claude-sub: Max 20x', or 'Plan: Max 20x' for the default login.
 
-    RunCat's title is one plain string with no styling, so the second line
-    cannot be set smaller or grey."""
-    caption = " · ".join(part for part in (account, plan) if part)
-    name = CARD_HEADINGS[provider]["name"]
-    return f"{name}\n{caption}" if caption else name
+    It is a row rather than a second title line because rows are drawn in
+    RunCat's smaller caption font, so it reads as a subtitle. RunCat offers no
+    way to set any text grey."""
+    if account:
+        return [{"title": account, "formattedValue": plan}] if plan else \
+               [{"title": labels["account"], "formattedValue": account}]
+    return [{"title": labels["plan"], "formattedValue": plan}] if plan else []
 
 
 def finalize(title, symbol, metrics, bar_value, now):
@@ -607,15 +612,14 @@ def render_card(reading, labels, now, account=""):
     from where the Reading was read, never from the Reading, so it is handed in
     the same way the clock is.
     """
-    metrics = join_blocks(
-        window_rows(window_title(window, labels), window.used, window.resets_at, labels, now)
-        for window in reading.windows
-    )
-    if not metrics:
+    windows = [window_rows(window_title(window, labels), window.used, window.resets_at, labels, now)
+               for window in reading.windows]
+    if not any(windows):
         return None
+    metrics = join_blocks([account_rows(reading.plan, account, labels), *windows])
     shares = {window.id: window.used for window in reading.windows}
     return finalize(
-        card_title(reading.provider, reading.plan, account),
+        CARD_HEADINGS[reading.provider]["name"],
         CARD_HEADINGS[reading.provider]["symbol"],
         metrics,
         bar_two(shares.get(SESSION_WINDOW), shares.get(WEEKLY_WINDOW)),
@@ -721,18 +725,37 @@ def claude_plan_label(oauth):
     return sub.capitalize() if sub else ""
 
 
+def home_entries(raw):
+    """(label, path) for each comma-separated entry of a *_HOMES setting. An
+    entry is a path, or 'label=path' to choose the name the Card shows."""
+    entries = []
+    for entry in raw.split(","):
+        label, sep, path = entry.partition("=")
+        label, path = (label.strip(), path.strip()) if sep else ("", entry.strip())
+        if path:
+            entries.append((label, path))
+    return entries
+
+
 @dataclass(frozen=True)
 class ClaudeHome:
     """One Claude Code login on this machine: a CLAUDE_CONFIG_DIR.
 
     Each home is a separate account, so its Card and Reading sit inside that
-    directory and never beside another home's. `name` is empty for ~/.claude,
-    which keeps the title and log lines it has always had; any other home is
-    named after its directory ('~/.claude-sub' -> 'claude-sub').
+    directory and never beside another home's. `name` is empty for ~/.claude
+    and is what tells the Keychain item apart; any other home is named after
+    its directory ('~/.claude-sub' -> 'claude-sub'). `label` is the name the
+    user gave it in RUNCAT_CLAUDE_HOMES ('personal=~/.claude'), and wins
+    wherever the account is shown.
     """
 
     root: Path
     name: str = ""
+    label: str = ""
+
+    @property
+    def account(self):
+        return self.label or self.name
 
     @property
     def keychain_service(self):
@@ -762,12 +785,12 @@ class ClaudeHome:
 
     @property
     def tag(self):
-        return log_tag("claude", self.name)
+        return log_tag("claude", self.account)
 
 
 def claude_homes(environ=None):
-    """The Claude homes to poll: RUNCAT_CLAUDE_HOMES (comma-separated) when set,
-    else ~/.claude alone.
+    """The Claude homes to poll: RUNCAT_CLAUDE_HOMES (comma-separated, each a path
+    or 'label=path') when set, else ~/.claude alone.
 
     Homes are named rather than discovered, the same as Codex homes: only a
     directory Claude Code was actually started with has a Keychain item to read.
@@ -776,21 +799,21 @@ def claude_homes(environ=None):
     Keychain item name is hashed from the path as written. The same directory
     named twice is still polled once.
     """
-    raw = (os.environ if environ is None else environ).get(CLAUDE_HOMES_ENV, "")
-    entries = [entry.strip() for entry in raw.split(",") if entry.strip()]
+    entries = home_entries((os.environ if environ is None else environ).get(CLAUDE_HOMES_ENV, ""))
     if not entries:
         return [ClaudeHome(CLAUDE_DEFAULT_HOME)]
 
     default = CLAUDE_DEFAULT_HOME.expanduser().resolve()
     homes, seen = [], set()
-    for entry in entries:
+    for label, entry in entries:
         root = Path(os.path.abspath(os.path.expanduser(entry)))
         if root.resolve() in seen:
             continue
         seen.add(root.resolve())
         is_default = root.resolve() == default
         homes.append(ClaudeHome(default if is_default else root,
-                                "" if is_default else root.name.lstrip(".") or str(root)))
+                                "" if is_default else root.name.lstrip(".") or str(root),
+                                label))
     return homes
 
 
@@ -922,7 +945,7 @@ def claude_reading(body, plan, now):
 
 
 def claude_recover(home, why, now):
-    return recover_card("claude", why, home.card, home.reading, now, home.name)
+    return recover_card("claude", why, home.card, home.reading, now, home.account)
 
 
 def claude_poll(home, now):
@@ -942,7 +965,7 @@ def claude_poll(home, now):
         return
 
     publish("claude", "usage response", home.card, home.reading,
-            claude_reading(body, claude_plan_label(oauth), now), now, home.name)
+            claude_reading(body, claude_plan_label(oauth), now), now, home.account)
 
 
 # ----------------------------- Codex -----------------------------
@@ -953,13 +976,19 @@ class CodexHome:
 
     Each home is a separate account, so everything the poller keeps for it — the
     Card, the Reading, the rotation-loss marker — lives beside that auth.json and
-    never beside another home's. `name` is empty for ~/.codex, which keeps the
-    title and log lines it has always had; any other home is named after its
-    directory ('~/.codex2' -> 'codex2').
+    never beside another home's. `name` is empty for ~/.codex; any other home is
+    named after its directory ('~/.codex2' -> 'codex2'). `label` is the name
+    the user gave it in RUNCAT_CODEX_HOMES ('personal=~/.codex'), and wins
+    wherever the account is shown.
     """
 
     root: Path
     name: str = ""
+    label: str = ""
+
+    @property
+    def account(self):
+        return self.label or self.name
 
     @property
     def auth_file(self):
@@ -979,12 +1008,12 @@ class CodexHome:
 
     @property
     def tag(self):
-        return log_tag("codex", self.name)
+        return log_tag("codex", self.account)
 
 
 def codex_homes(environ=None):
-    """The Codex homes to poll: RUNCAT_CODEX_HOMES (comma-separated) when set,
-    else ~/.codex alone.
+    """The Codex homes to poll: RUNCAT_CODEX_HOMES (comma-separated, each a path
+    or 'label=path') when set, else ~/.codex alone.
 
     Homes are named explicitly rather than discovered. A backup such as
     ~/.codex.bak can hold a copy of a live credential, and refreshing that copy
@@ -993,19 +1022,19 @@ def codex_homes(environ=None):
     The same directory named twice is polled once, so one credential is never
     refreshed twice in a run.
     """
-    raw = (os.environ if environ is None else environ).get(CODEX_HOMES_ENV, "")
-    entries = [entry.strip() for entry in raw.split(",") if entry.strip()]
+    entries = home_entries((os.environ if environ is None else environ).get(CODEX_HOMES_ENV, ""))
     if not entries:
         return [CodexHome(CODEX_DEFAULT_HOME)]
 
     default = CODEX_DEFAULT_HOME.expanduser().resolve()
     homes, seen = [], set()
-    for entry in entries:
+    for label, entry in entries:
         root = Path(entry).expanduser().resolve()
         if root in seen:
             continue
         seen.add(root)
-        homes.append(CodexHome(root, "" if root == default else root.name.lstrip(".") or str(root)))
+        homes.append(CodexHome(root, "" if root == default else root.name.lstrip(".") or str(root),
+                               label))
     return homes
 
 
@@ -1169,7 +1198,7 @@ def codex_rotation_still_lost(home, refresh_token):
 
 
 def codex_recover(home, why, now):
-    return recover_card("codex", why, home.card, home.reading, now, home.name)
+    return recover_card("codex", why, home.card, home.reading, now, home.account)
 
 
 def codex_poll(home, now):
@@ -1234,7 +1263,7 @@ def codex_poll(home, now):
         return
 
     publish("codex", "usage response", home.card, home.reading,
-            codex_reading(body, codex_plan_label(body.get("plan_type")), now), now, home.name)
+            codex_reading(body, codex_plan_label(body.get("plan_type")), now), now, home.account)
 
 
 # ----------------------------- main -----------------------------

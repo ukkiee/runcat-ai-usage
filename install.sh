@@ -60,7 +60,7 @@ echo "Next: RunCat Neo -> Settings -> Metrics -> Custom Metrics -> Add Custom Me
 if [ -n "${RUNCAT_CLAUDE_HOMES:-}" ]; then
   IFS=',' read -ra CLAUDE_HOMES <<< "$RUNCAT_CLAUDE_HOMES"
   for home in "${CLAUDE_HOMES[@]}"; do
-    home="$(echo "$home" | xargs)"
+    home="$(echo "${home#*=}" | xargs)"
     [ -n "$home" ] && echo "  ${home%/}/runcat-usage.json   (Claude Code)"
   done
 else
@@ -69,7 +69,7 @@ fi
 if [ -n "${RUNCAT_CODEX_HOMES:-}" ]; then
   IFS=',' read -ra CODEX_HOMES <<< "$RUNCAT_CODEX_HOMES"
   for home in "${CODEX_HOMES[@]}"; do
-    home="$(echo "$home" | xargs)"
+    home="$(echo "${home#*=}" | xargs)"
     [ -n "$home" ] && echo "  ${home%/}/runcat-usage.json   (Codex)"
   done
 else

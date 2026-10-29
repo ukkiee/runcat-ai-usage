@@ -20,7 +20,7 @@ rm -f "$PLIST"
 CARDS=""
 IFS=',' read -ra HOMES <<< "$CLAUDE_HOMES"
 for home in "${HOMES[@]}"; do
-  home="$(echo "$home" | xargs)"
+  home="$(echo "${home#*=}" | xargs)"  # drop a "label=" prefix
   [ -n "$home" ] || continue
   home="${home/#\~/$HOME}"
   home="${home%/}"
@@ -30,7 +30,7 @@ for home in "${HOMES[@]}"; do
 done
 IFS=',' read -ra HOMES <<< "$CODEX_HOMES"
 for home in "${HOMES[@]}"; do
-  home="$(echo "$home" | xargs)"
+  home="$(echo "${home#*=}" | xargs)"  # drop a "label=" prefix
   [ -n "$home" ] || continue
   home="${home/#\~/$HOME}"
   home="${home%/}"

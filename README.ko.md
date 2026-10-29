@@ -6,7 +6,8 @@
 
 ```
 Claude                         메뉴바: 55% · 55%
- Max 20x
+  플랜: Max 20x
+
   현재 세션: 55% 남음
   ▓▓▓▓▓░░░░░
   재설정: 1시간 53분 후 · 14:10
@@ -72,7 +73,7 @@ Codex 계정을 홈 디렉터리별로 나눠 쓰고 있다면(예: `CODEX_HOME=
 RUNCAT_CODEX_HOMES="~/.codex,~/.codex2" ./install.sh
 ```
 
-홈마다 자기 `auth.json` 옆에 카드가 따로 생기므로, RunCat Neo에 `~/.codex2/runcat-usage.json`도 추가해야 합니다. `~/.codex`가 아닌 홈의 카드는 제목 아래 줄에 디렉터리 이름이 붙습니다(`codex2 · Pro 5x`). 홈을 자동으로 찾지는 않습니다. 자동으로 찾으면 `auth.json` 백업 사본까지 토큰을 갱신하게 되고, 그러면 실제 로그인이 풀리기 때문입니다.
+홈마다 자기 `auth.json` 옆에 카드가 따로 생기므로, RunCat Neo에 `~/.codex2/runcat-usage.json`도 추가해야 합니다. `~/.codex`가 아닌 홈의 카드는 카드 첫 행에 디렉터리 이름이 붙습니다(`codex2: Pro 5x`). 홈을 자동으로 찾지는 않습니다. 자동으로 찾으면 `auth.json` 백업 사본까지 토큰을 갱신하게 되고, 그러면 실제 로그인이 풀리기 때문입니다.
 
 ### 여러 Claude 계정
 
@@ -82,7 +83,9 @@ RUNCAT_CODEX_HOMES="~/.codex,~/.codex2" ./install.sh
 RUNCAT_CLAUDE_HOMES="~/.claude,~/.claude-sub" ./install.sh
 ```
 
-RunCat Neo에 `~/.claude-sub/runcat-usage.json`도 추가해야 하고, 카드 제목은 `Claude`이고 그 아래 줄에 `claude-sub · Max 20x`가 붙습니다. Claude Code는 이 로그인을 디렉터리 경로의 해시가 붙은 키체인 항목(`Claude Code-credentials-<16진수 8자리>`)에 저장합니다. 그래서 `CLAUDE_CONFIG_DIR`은 끝에 `/` 없이, 심링크를 거치지 않은 절대 경로여야 합니다. 그렇지 않으면 폴러가 존재하지 않는 항목을 찾게 됩니다. 기본 로그인과 마찬가지로, 그 계정을 대략 최근 1시간 안에 써서 토큰이 유효할 때만 실측값이 표시됩니다.
+RunCat Neo에 `~/.claude-sub/runcat-usage.json`도 추가해야 하고, 카드 첫 행은 `claude-sub: Max 20x`가 됩니다(기본 홈은 `플랜: Max 20x`). Claude Code는 이 로그인을 디렉터리 경로의 해시가 붙은 키체인 항목(`Claude Code-credentials-<16진수 8자리>`)에 저장합니다. 그래서 `CLAUDE_CONFIG_DIR`은 끝에 `/` 없이, 심링크를 거치지 않은 절대 경로여야 합니다. 그렇지 않으면 폴러가 존재하지 않는 항목을 찾게 됩니다. 기본 로그인과 마찬가지로, 그 계정을 대략 최근 1시간 안에 써서 토큰이 유효할 때만 실측값이 표시됩니다.
+
+카드 첫 행에는 디렉터리 이름이 붙고, 기본 홈은 `플랜: Max 20x`로 표시됩니다. 이름을 직접 정하려면 `이름=경로`로 적습니다. 예를 들어 `RUNCAT_CLAUDE_HOMES="personal=~/.claude,~/.claude-sub"`이면 `personal: Max 20x`가 됩니다. 이름은 카드 표시만 바꾸고, 키체인 항목은 여전히 경로로 찾습니다.
 
 다시 설치할 때는 예전에 지정한 변수(`RUNCAT_CLAUDE_HOMES`, `RUNCAT_CODEX_HOMES`)를 모두 다시 넘기세요. `install.sh`가 에이전트를 처음부터 새로 쓰기 때문입니다.
 
@@ -101,8 +104,8 @@ RunCat Neo에 `~/.claude-sub/runcat-usage.json`도 추가해야 하고, 카드 �
 | 변수 | 기본값 | 효과 |
 |---|---|---|
 | `RUNCAT_LANG` | 자동 (macOS 시스템 언어) | `ko` 또는 `en`으로 카드 언어 강제 지정 |
-| `RUNCAT_CLAUDE_HOMES` | `~/.claude` | 조회할 Claude Code 설정 디렉터리 목록(쉼표 구분). 홈마다 카드가 하나씩 생김 |
-| `RUNCAT_CODEX_HOMES` | `~/.codex` | 조회할 Codex 홈 목록(쉼표 구분). 홈마다 카드가 하나씩 생김 |
+| `RUNCAT_CLAUDE_HOMES` | `~/.claude` | 조회할 Claude Code 설정 디렉터리 목록(쉼표 구분). 홈마다 카드가 하나씩 생김. `이름=경로`로 카드에 보일 이름 지정(`personal=~/.claude`) |
+| `RUNCAT_CODEX_HOMES` | `~/.codex` | 조회할 Codex 홈 목록(쉼표 구분). 홈마다 카드가 하나씩 생김. `이름=경로`로 카드에 보일 이름 지정(`personal=~/.codex`) |
 | `RUNCAT_POLL_INTERVAL` | `300` | 폴링 주기(초). 설치 시점에만 적용 |
 
 카드 라벨과 플랜 이름은 `runcat_poll.py`(진입점 옆의 구현 파일) 상단에 있습니다:

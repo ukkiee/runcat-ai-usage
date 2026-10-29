@@ -6,7 +6,8 @@ Show how much of your **Claude Code** and **Codex** limits is left — session /
 
 ```
 Claude                         menu bar: 55% · 55%
- Max 20x
+  Plan: Max 20x
+
   Session: 55% left
   ▓▓▓▓▓░░░░░
   reset: 1h 53m · 14:10
@@ -72,7 +73,7 @@ If you keep more than one Codex login in separate homes (e.g. `CODEX_HOME=~/.cod
 RUNCAT_CODEX_HOMES="~/.codex,~/.codex2" ./install.sh
 ```
 
-Each home gets its own card beside its own `auth.json`, so add `~/.codex2/runcat-usage.json` in RunCat Neo as well. A card from any home other than `~/.codex` carries the directory name on the line under its title (`codex2 · Pro 5x`). Homes are never discovered on their own: a backup copy of `auth.json` would otherwise be refreshed and sign the real login out.
+Each home gets its own card beside its own `auth.json`, so add `~/.codex2/runcat-usage.json` in RunCat Neo as well. A card from any home other than `~/.codex` names its directory in the card's first row (`codex2: Pro 5x`). Homes are never discovered on their own: a backup copy of `auth.json` would otherwise be refreshed and sign the real login out.
 
 ### Several Claude accounts
 
@@ -82,7 +83,9 @@ If you run a second Claude Code login with its own config directory (e.g. `CLAUD
 RUNCAT_CLAUDE_HOMES="~/.claude,~/.claude-sub" ./install.sh
 ```
 
-Add `~/.claude-sub/runcat-usage.json` in RunCat Neo as well; its card is titled `Claude` with `claude-sub · Max 20x` on the line under it. Claude Code stores that login in a Keychain item named after a hash of the directory path (`Claude Code-credentials-<8 hex>`), so `CLAUDE_CONFIG_DIR` must be the plain absolute path: no trailing slash, and not reached through a symlink, or the poller looks for an item that does not exist. As with the default login, the card stays live only while that login's token is valid, which means using that account within roughly the last hour.
+Add `~/.claude-sub/runcat-usage.json` in RunCat Neo as well; its card's first row reads `claude-sub: Max 20x` (the default home's reads `Plan: Max 20x`). Claude Code stores that login in a Keychain item named after a hash of the directory path (`Claude Code-credentials-<8 hex>`), so `CLAUDE_CONFIG_DIR` must be the plain absolute path: no trailing slash, and not reached through a symlink, or the poller looks for an item that does not exist. As with the default login, the card stays live only while that login's token is valid, which means using that account within roughly the last hour.
+
+Every card's first row names its home after the directory, and the default home's reads `Plan: Max 20x`. To name a home yourself, write `label=path`, e.g. `RUNCAT_CLAUDE_HOMES="personal=~/.claude,~/.claude-sub"` gives `personal: Max 20x`. The label only changes what the card shows; the Keychain item is still found from the path.
 
 When you reinstall, pass every variable you set before (`RUNCAT_CLAUDE_HOMES`, `RUNCAT_CODEX_HOMES`) again, since `install.sh` rewrites the agent from scratch.
 
@@ -101,8 +104,8 @@ Environment variables (export `RUNCAT_CLAUDE_HOMES` / `RUNCAT_CODEX_HOMES` / `RU
 | Variable | Default | Effect |
 |---|---|---|
 | `RUNCAT_LANG` | auto (macOS UI language) | `ko` or `en` to force the card language. |
-| `RUNCAT_CLAUDE_HOMES` | `~/.claude` | Comma-separated Claude Code config directories to poll, one card each. |
-| `RUNCAT_CODEX_HOMES` | `~/.codex` | Comma-separated Codex homes to poll, one card each. |
+| `RUNCAT_CLAUDE_HOMES` | `~/.claude` | Comma-separated Claude Code config directories to poll, one card each. Write `label=path` to choose the name a card shows (`personal=~/.claude`). |
+| `RUNCAT_CODEX_HOMES` | `~/.codex` | Comma-separated Codex homes to poll, one card each. Write `label=path` to choose the name a card shows (`personal=~/.codex`). |
 | `RUNCAT_POLL_INTERVAL` | `300` | Poll interval in seconds (install-time only). |
 
 Card labels and plan names live at the top of `runcat_poll.py` (the implementation beside the entry point):

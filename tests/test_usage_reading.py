@@ -43,9 +43,10 @@ LIVE_RESPONSE = {
 }
 
 LIVE_CARD = {
-    "title": "Claude\nMax 20x",
+    "title": "Claude",
     "symbol": "staroflife",
     "metrics": [
+        {"title": "플랜", "formattedValue": "Max 20x\n"},
         {"title": "현재 세션", "formattedValue": "53% 남음", "normalizedValue": 0.53},
         {"title": "재설정", "formattedValue": "2시간 2분 후 · 19:20\n"},
         {"title": "주간 한도", "formattedValue": "23% 남음", "normalizedValue": 0.23},
@@ -233,7 +234,7 @@ class BoundaryValidationTest(ReadingCase):
 
         card = mod.render_card(reading, mod.label_set("ko"), NOW)
 
-        self.assertEqual([row["title"] for row in card["metrics"]], ["현재 세션"])
+        self.assertEqual([row["title"] for row in card["metrics"]], ["플랜", "현재 세션"])
 
 
 class LegacyResponseTest(ReadingCase):
@@ -331,7 +332,8 @@ class ClaudeCardTest(ReadingCase):
 
         self.assertEqual(
             [(row["title"], row["formattedValue"]) for row in card["metrics"]],
-            [("Session", "53% left"), ("reset", "2h 2m · 19:20\n"),
+            [("Plan", "Max 20x\n"),
+             ("Session", "53% left"), ("reset", "2h 2m · 19:20\n"),
              ("Weekly", "23% left"), ("reset", "3d 10h · Mon 04:00\n"),
              ("Fable", "34% left"), ("reset", "3d 10h · Mon 03:59\n")],
         )
@@ -348,7 +350,7 @@ class ClaudeCardTest(ReadingCase):
     def test_a_window_past_its_reset_shows_no_countdown(self):
         """We genuinely do not know the next Reset — Claude states no window
         length — so the countdown is omitted rather than extrapolated."""
-        for lang, expected in (("ko", ["현재 세션"]), ("en", ["Session"])):
+        for lang, expected in (("ko", ["플랜", "현재 세션"]), ("en", ["Plan", "Session"])):
             with self.subTest(lang=lang):
                 card = mod.render_card(
                     self.one_window(resets_at="2026-07-23T08:00:00Z"),
@@ -356,12 +358,13 @@ class ClaudeCardTest(ReadingCase):
                 )
                 self.assertEqual([row["title"] for row in card["metrics"]], expected)
 
-    def test_every_window_is_followed_by_one_blank_line(self):
-        """The last one too: RunCat draws its 'last updated' line right under the
-        rows, and without the gap it reads as part of the last Window."""
+    def test_every_block_is_followed_by_one_blank_line(self):
+        """The account row and every Window, the last one too: RunCat draws its
+        'last updated' line right under the rows, and without the gap it reads as
+        part of the last Window."""
         metrics = self.render()["metrics"]
 
-        for row in (metrics[1], metrics[3], metrics[5]):
+        for row in (metrics[0], metrics[2], metrics[4], metrics[6]):
             self.assertTrue(row["formattedValue"].endswith("\n"))
             self.assertFalse(row["formattedValue"].endswith("\n\n"))
 
@@ -377,13 +380,13 @@ class ClaudeCardTest(ReadingCase):
         card = mod.render_card(reading, mod.label_set("ko"), NOW)
 
         self.assertEqual(reading.windows[0].used, 47.0)
-        self.assertEqual(card["metrics"][0]["formattedValue"], "53% 남음")
-        self.assertEqual(card["metrics"][0]["normalizedValue"], 0.53)
+        self.assertEqual(card["metrics"][1]["formattedValue"], "53% 남음")
+        self.assertEqual(card["metrics"][1]["normalizedValue"], 0.53)
 
     def test_a_fractional_share_left_carries_no_float_noise(self):
         card = mod.render_card(self.one_window(percent=12.7), mod.label_set("en"), NOW)
 
-        self.assertEqual(card["metrics"][0]["formattedValue"], "87.3% left")
+        self.assertEqual(card["metrics"][1]["formattedValue"], "87.3% left")
 
     def test_without_session_or_weekly_the_menu_bar_shows_the_window_with_the_least_left(self):
         reading = mod.UsageReading(
@@ -402,7 +405,7 @@ class ClaudeCardTest(ReadingCase):
         card = self.render(now=later)
 
         self.assertEqual(card["lastUpdatedDate"], "2026-07-23T09:17:25Z")
-        self.assertEqual(card["metrics"][1]["formattedValue"], "1시간 2분 후 · 19:20\n")
+        self.assertEqual(card["metrics"][2]["formattedValue"], "1시간 2분 후 · 19:20\n")
 
     def test_a_reading_with_no_windows_renders_nothing_to_publish(self):
         """Nothing to render means the last-good Card stands, not an empty one."""
@@ -420,7 +423,7 @@ class ClaudeCardTest(ReadingCase):
 
         card = mod.render_card(reading, mod.label_set("ko"), NOW)
 
-        self.assertEqual([row["title"] for row in card["metrics"]], ["현재 세션", "재설정"])
+        self.assertEqual([row["title"] for row in card["metrics"]], ["플랜", "현재 세션", "재설정"])
         self.assertFalse(card["metrics"][-1]["formattedValue"].endswith("\n\n"))
 
 
@@ -473,16 +476,30 @@ class InterfaceLanguageTest(ReadingCase):
 
 
 
-class CardTitleTest(unittest.TestCase):
-    def test_the_second_line_names_the_account_and_the_plan(self):
-        self.assertEqual(mod.card_title("codex", "Business", "codex-work"),
-                         "Codex\ncodex-work · Business")
+class AccountRowTest(unittest.TestCase):
+    """The row under the title, shaped like RunCat's own 'Model: Opus 4.8'."""
 
-    def test_the_default_login_shows_the_plan_alone(self):
-        self.assertEqual(mod.card_title("claude", "Max 20x"), "Claude\nMax 20x")
+    KO = mod.label_set("ko")
 
-    def test_nothing_to_caption_leaves_the_name_alone(self):
-        self.assertEqual(mod.card_title("claude", ""), "Claude")
+    def test_another_home_names_itself_and_its_plan(self):
+        self.assertEqual(mod.account_rows("Business", "codex-work", self.KO),
+                         [{"title": "codex-work", "formattedValue": "Business"}])
+
+    def test_the_default_home_shows_its_plan(self):
+        self.assertEqual(mod.account_rows("Max 20x", "", self.KO),
+                         [{"title": "플랜", "formattedValue": "Max 20x"}])
+
+    def test_another_home_with_no_known_plan_still_names_itself(self):
+        self.assertEqual(mod.account_rows("", "codex-work", self.KO),
+                         [{"title": "계정", "formattedValue": "codex-work"}])
+
+    def test_with_nothing_to_say_there_is_no_row(self):
+        self.assertEqual(mod.account_rows("", "", self.KO), [])
+
+    def test_the_title_is_the_provider_name_alone(self):
+        reading = mod.claude_reading({"limits": [{"kind": "session", "percent": 47}]}, "Max 20x", NOW)
+
+        self.assertEqual(mod.render_card(reading, self.KO, NOW, "claude-sub")["title"], "Claude")
 
 
 class ResetMomentTest(unittest.TestCase):

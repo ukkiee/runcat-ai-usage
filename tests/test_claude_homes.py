@@ -73,6 +73,16 @@ class ClaudeHomesTest(Patching):
 
         self.assertEqual(self.homes(f"{self.user}/.claude-sub")[0].root, self.user / ".claude-sub")
 
+    def test_a_label_names_the_account_without_changing_which_keychain_item_is_read(self):
+        """'personal=~/.claude' renames the default login on the Card, but it is
+        still the login whose credential sits under the bare item name."""
+        homes = self.homes(f"personal={self.user}/.claude, sub = {self.user}/.claude-sub")
+
+        self.assertEqual([home.account for home in homes], ["personal", "sub"])
+        self.assertEqual(homes[0].keychain_service, "Claude Code-credentials")
+        self.assertEqual(homes[1].keychain_service,
+                         mod.ClaudeHome(self.user / ".claude-sub", "claude-sub").keychain_service)
+
     def test_everything_a_home_keeps_sits_inside_it(self):
         home = mod.ClaudeHome(self.user / ".claude-sub", "claude-sub")
 
@@ -160,14 +170,18 @@ class TwoHomesPollTest(Patching):
     def test_each_home_writes_its_own_accounts_usage_to_its_own_card(self):
         self.poll_both()
 
-        weekly = [self.card(home)["metrics"][2]["formattedValue"] for home in (self.first, self.second)]
+        weekly = [self.card(home)["metrics"][3]["formattedValue"] for home in (self.first, self.second)]
         self.assertEqual(weekly, ["87% 남음", "10% 남음"])
 
-    def test_only_a_home_other_than_the_default_names_itself_in_the_title(self):
+    def test_only_a_home_other_than_the_default_names_itself_in_the_first_row(self):
         self.poll_both()
 
-        self.assertEqual(self.card(self.first)["title"], "Claude\nMax 20x")
-        self.assertEqual(self.card(self.second)["title"], "Claude\nclaude-sub · Max 20x")
+        self.assertEqual([self.card(home)["title"] for home in (self.first, self.second)],
+                         ["Claude", "Claude"])
+        self.assertEqual(self.card(self.first)["metrics"][0],
+                         {"title": "플랜", "formattedValue": "Max 20x\n"})
+        self.assertEqual(self.card(self.second)["metrics"][0],
+                         {"title": "claude-sub", "formattedValue": "Max 20x\n"})
 
     def test_a_recovered_card_keeps_the_name_of_its_home(self):
         self.poll_both()
@@ -175,7 +189,7 @@ class TwoHomesPollTest(Patching):
 
         self.poll_both(now=NOW + HOUR)
 
-        self.assertEqual(self.card(self.second)["title"], "Claude\nclaude-sub · Max 20x")
+        self.assertEqual(self.card(self.second)["metrics"][0]["title"], "claude-sub")
         self.assertIn("claude (claude-sub): usage fetch failed", " ".join(self.logs))
 
 

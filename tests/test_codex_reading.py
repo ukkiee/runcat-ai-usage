@@ -40,9 +40,10 @@ RESPONSE = {
 }
 
 LIVE_CARD = {
-    "title": "Codex\nPro 5x",
+    "title": "Codex",
     "symbol": "camera.aperture",
     "metrics": [
+        {"title": "플랜", "formattedValue": "Pro 5x\n"},
         {"title": "주간 한도", "formattedValue": "87% 남음", "normalizedValue": 0.87},
         {"title": "재설정", "formattedValue": "5일 12시간 후 · 수 09:06\n"},
     ],
@@ -121,7 +122,11 @@ class CodexCase(unittest.TestCase):
         return json.loads(self.card_path.read_text(encoding="utf-8"))
 
     def rows(self):
-        return [(row["title"], row["formattedValue"]) for row in self.card()["metrics"]]
+        """The Window rows. The first row names the account and its Plan and is
+        pinned elsewhere; these tests are about the Windows under it."""
+        account, *windows = self.card()["metrics"]
+        self.assertNotIn("normalizedValue", account)
+        return [(row["title"], row["formattedValue"]) for row in windows]
 
     def stored(self):
         return json.loads(self.reading_path.read_text(encoding="utf-8"))

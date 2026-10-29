@@ -63,6 +63,15 @@ class CodexHomesTest(unittest.TestCase):
 
         self.assertEqual(len(homes), 1)
 
+    def test_a_label_names_the_account_on_the_card(self):
+        homes = self.homes(f"personal={self.user}/.codex,{self.user}/.codex2")
+
+        self.assertEqual([home.account for home in homes], ["personal", "codex2"])
+        self.assertEqual([home.root for home in homes], [self.user / ".codex", self.user / ".codex2"])
+
+    def test_an_entry_with_a_label_but_no_path_is_ignored(self):
+        self.assertEqual(self.homes("personal="), [mod.CodexHome(self.user / ".codex")])
+
     def test_a_tilde_is_expanded_because_launchd_never_does(self):
         homes = mod.codex_homes({mod.CODEX_HOMES_ENV: "~/.codex2"})
 
@@ -122,14 +131,16 @@ class TwoHomesPollTest(unittest.TestCase):
     def test_each_home_writes_its_own_accounts_usage_to_its_own_card(self):
         self.poll_both()
 
-        self.assertEqual(self.card(self.first)["metrics"][0]["formattedValue"], "87% 남음")
-        self.assertEqual(self.card(self.second)["metrics"][0]["formattedValue"], "10% 남음")
+        self.assertEqual(self.card(self.first)["metrics"][1]["formattedValue"], "87% 남음")
+        self.assertEqual(self.card(self.second)["metrics"][1]["formattedValue"], "10% 남음")
 
-    def test_only_a_home_other_than_the_default_names_itself_in_the_title(self):
+    def test_only_a_home_other_than_the_default_names_itself_in_the_first_row(self):
         self.poll_both()
 
-        self.assertEqual(self.card(self.first)["title"], "Codex\nPro 5x")
-        self.assertEqual(self.card(self.second)["title"], "Codex\ncodex2 · Pro 5x")
+        self.assertEqual(self.card(self.first)["metrics"][0],
+                         {"title": "플랜", "formattedValue": "Pro 5x\n"})
+        self.assertEqual(self.card(self.second)["metrics"][0],
+                         {"title": "codex2", "formattedValue": "Pro 5x\n"})
 
     def test_each_home_keeps_its_own_reading(self):
         self.poll_both()
@@ -144,7 +155,7 @@ class TwoHomesPollTest(unittest.TestCase):
 
         self.poll_both(now=NOW + 3 * HOUR)
 
-        self.assertEqual(self.card(self.second)["title"], "Codex\ncodex2 · Pro 5x")
+        self.assertEqual(self.card(self.second)["metrics"][0]["title"], "codex2")
         self.assertIn("codex (codex2): usage fetch failed", " ".join(self.logs))
 
 
