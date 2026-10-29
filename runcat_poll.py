@@ -15,10 +15,8 @@ Card shape:
   account after its directory, and its plan: "claude: Max 20x",
   "claude-sub: Max 20x".
 - each rate-limit window is two rows: the share still left (with the bar) and,
-  underneath it, a bar-less reset line carrying both the countdown and the local
-  wall-clock moment ("16분 후 · 12:10", "3일 16시간 후 · 월 04:00"), so the
-  countdown isn't cramped next to the percentage. Windows are "Session" (5h) and
-  "Weekly" (7d).
+  underneath it, a bar-less "reset in <time>" line so the countdown isn't cramped
+  next to the percentage. Windows are "Session" (5h) and "Weekly" (7d).
 
 Every Codex home named in RUNCAT_CODEX_HOMES (comma-separated, default ~/.codex)
 is its own account and gets its own Card beside its own auth.json. Claude works
@@ -111,10 +109,7 @@ STRINGS = {
         "hours": "{hours}시간 {minutes}분",
         "minutes": "{minutes}분",
         "moment": "1분 미만",
-        "countdown": "{duration} 후 · {when}",
-        "tomorrow": "내일 {time}",
-        "weekday": "{day} {time}",
-        "weekdays": "월 화 수 목 금 토 일",
+        "countdown": "{duration} 후",
     },
     "en": {
         "session": "Session",
@@ -127,10 +122,7 @@ STRINGS = {
         "hours": "{hours}h {minutes}m",
         "minutes": "{minutes}m",
         "moment": "<1m",
-        "countdown": "{duration} · {when}",
-        "tomorrow": "tomorrow {time}",
-        "weekday": "{day} {time}",
-        "weekdays": "Mon Tue Wed Thu Fri Sat Sun",
+        "countdown": "{duration}",
     },
 }
 
@@ -489,29 +481,6 @@ def fmt_duration(seconds, labels):
     return labels["moment"]
 
 
-def local_time(epoch):
-    """An epoch as this Mac's wall clock. fromtimestamp applies the zone's rules
-    at that moment, so a Reset on the far side of a DST change still reads right."""
-    return datetime.fromtimestamp(epoch)
-
-
-def fmt_when(resets_at, labels, now):
-    """When a Reset happens on the local clock: '12:10' today, '내일 03:00'
-    tomorrow, '월 04:00' further out. A weekday is enough because no Window is
-    longer than a week, and the countdown beside it says which week.
-
-    The countdown is worked out once per poll and then sits on the Card until the
-    next one, so it can be a full poll interval behind. The moment never drifts."""
-    moment = local_time(resets_at)
-    clock = moment.strftime("%H:%M")
-    days = (moment.date() - local_time(now).date()).days
-    if days <= 0:
-        return clock
-    if days == 1:
-        return labels["tomorrow"].format(time=clock)
-    return labels["weekday"].format(day=labels["weekdays"].split()[moment.weekday()], time=clock)
-
-
 def window_title(window, labels):
     """What the Card calls a Window: the label set names the ones every Provider
     has, and a Model-Scoped Window carries the model's own name instead."""
@@ -525,8 +494,7 @@ def left_share(used):
 
 
 def window_rows(title, used, resets_at_epoch, labels, now):
-    """A window's share-left row (with bar) plus a bar-less reset row that states
-    both how long until the Reset and when it falls on the local clock.
+    """A window's share-left row (with bar) plus a bar-less 'reset in <time>' row.
 
     The Reading keeps the used share; only the Card turns it around, so a Stale
     Reading written before the Card showed what is left still renders correctly.
@@ -541,9 +509,8 @@ def window_rows(title, used, resets_at_epoch, labels, now):
              "normalizedValue": round(left / 100, 4)}]
     if isinstance(resets_at_epoch, (int, float)) and resets_at_epoch - now > 0:
         dur = fmt_duration(resets_at_epoch - now, labels)
-        when = fmt_when(resets_at_epoch, labels, now)
         rows.append({"title": labels["reset"],
-                     "formattedValue": labels["countdown"].format(duration=dur, when=when)})
+                     "formattedValue": labels["countdown"].format(duration=dur)})
     return rows
 
 

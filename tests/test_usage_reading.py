@@ -48,11 +48,11 @@ LIVE_CARD = {
     "metrics": [
         {"title": "플랜", "formattedValue": "Max 20x\n"},
         {"title": "현재 세션", "formattedValue": "53% 남음", "normalizedValue": 0.53},
-        {"title": "재설정", "formattedValue": "2시간 2분 후 · 19:20\n"},
+        {"title": "재설정", "formattedValue": "2시간 2분 후\n"},
         {"title": "주간 한도", "formattedValue": "23% 남음", "normalizedValue": 0.23},
-        {"title": "재설정", "formattedValue": "3일 10시간 후 · 월 04:00\n"},
+        {"title": "재설정", "formattedValue": "3일 10시간 후\n"},
         {"title": "Fable", "formattedValue": "34% 남음", "normalizedValue": 0.34},
-        {"title": "재설정", "formattedValue": "3일 10시간 후 · 월 03:59\n"},
+        {"title": "재설정", "formattedValue": "3일 10시간 후\n"},
     ],
     "lastUpdatedDate": "2026-07-23T08:17:25Z",
     "metricsBarValue": "53% · 23%",
@@ -333,9 +333,9 @@ class ClaudeCardTest(ReadingCase):
         self.assertEqual(
             [(row["title"], row["formattedValue"]) for row in card["metrics"]],
             [("Plan", "Max 20x\n"),
-             ("Session", "53% left"), ("reset", "2h 2m · 19:20\n"),
-             ("Weekly", "23% left"), ("reset", "3d 10h · Mon 04:00\n"),
-             ("Fable", "34% left"), ("reset", "3d 10h · Mon 03:59\n")],
+             ("Session", "53% left"), ("reset", "2h 2m\n"),
+             ("Weekly", "23% left"), ("reset", "3d 10h\n"),
+             ("Fable", "34% left"), ("reset", "3d 10h\n")],
         )
 
     def test_the_language_moves_the_labels_and_nothing_else(self):
@@ -423,7 +423,7 @@ class ClaudeCardTest(ReadingCase):
         card = self.render(now=later)
 
         self.assertEqual(card["lastUpdatedDate"], "2026-07-23T09:17:25Z")
-        self.assertEqual(card["metrics"][2]["formattedValue"], "1시간 2분 후 · 19:20\n")
+        self.assertEqual(card["metrics"][2]["formattedValue"], "1시간 2분 후\n")
 
     def test_a_reading_with_no_windows_renders_nothing_to_publish(self):
         """Nothing to render means the last-good Card stands, not an empty one."""
@@ -518,33 +518,6 @@ class AccountRowTest(unittest.TestCase):
         reading = mod.claude_reading({"limits": [{"kind": "session", "percent": 47}]}, "Max 20x", NOW)
 
         self.assertEqual(mod.render_card(reading, self.KO, NOW, "claude-sub")["title"], "Claude")
-
-
-class ResetMomentTest(unittest.TestCase):
-    """A Reset on the local clock. NOW is Thursday 17:17 in the zone the tests
-    package pins (Asia/Seoul)."""
-
-    def when(self, offset, lang="ko"):
-        return mod.fmt_when(NOW + offset, mod.label_set(lang), NOW)
-
-    def test_later_today_reads_as_the_time_alone(self):
-        self.assertEqual(self.when(5 * 3600), "22:17")
-
-    def test_tomorrow_is_named_by_the_date_not_by_24_hours(self):
-        """01:17 is only 8 hours off but already tomorrow; 23:17 the next day is
-        30 hours off and still tomorrow."""
-        self.assertEqual(self.when(8 * 3600), "내일 01:17")
-        self.assertEqual(self.when(30 * 3600), "내일 23:17")
-
-    def test_further_out_reads_as_the_weekday(self):
-        self.assertEqual(self.when(3 * 86400), "일 17:17")
-        self.assertEqual(self.when(3 * 86400, "en"), "Sun 17:17")
-        self.assertEqual(self.when(8 * 3600, "en"), "tomorrow 01:17")
-
-    def test_a_full_week_out_names_the_same_weekday_as_today(self):
-        """No Window is longer than a week, so this is the one repeat a weekday
-        can have, and the countdown beside it ('7일') says which one it is."""
-        self.assertEqual(self.when(7 * 86400), "목 17:17")
 
 
 if __name__ == "__main__":

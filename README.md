@@ -10,15 +10,15 @@ Claude                         menu bar: 55% · 55%
 
   Session: 55% left
   ▓▓▓▓▓░░░░░
-  reset: 1h 53m · 14:10
+  reset: 1h 53m
 
   Weekly: 55% left
   ▓▓▓▓▓░░░░░
-  reset: 4d 9h · Mon 04:00
+  reset: 4d 9h
 
   Fable: 55% left
   ▓▓▓▓▓░░░░░
-  reset: 4d 9h · Mon 04:00
+  reset: 4d 9h
 
   Last updated: now
 ```
@@ -110,7 +110,7 @@ Environment variables (export `RUNCAT_CLAUDE_HOMES` / `RUNCAT_CODEX_HOMES` / `RU
 
 Card labels and plan names live at the top of `runcat_poll.py` (the implementation beside the entry point):
 
-- `STRINGS` — every display string per language: the `session` / `weekly` / `reset` row labels, the `left` share wording, and the countdown and reset-time wording (`tomorrow`, `weekdays`). It holds no window identities, so translating a card changes labels only.
+- `STRINGS` — every display string per language: the `session` / `weekly` / `reset` row labels, the `left` share wording and the countdown wording. It holds no window identities, so translating a card changes labels only.
 - `CODEX_PLAN_LABELS` — maps Codex `plan_type` to a display name (e.g. `prolite → "Pro 5x"`, `pro → "Pro 20x"`).
 - Claude's plan (`Max 20x`, …) is derived automatically from its rate-limit tier.
 - The per-model weekly cap uses the model's own name (e.g. `Fable`), so it follows whatever model your plan currently scopes.
@@ -125,7 +125,7 @@ Card labels and plan names live at the top of `runcat_poll.py` (the implementati
 
 - The usage endpoints are **undocumented/internal** (used by the official clients). They can change without notice, in which case this tool — and `openusage` — would need updating.
 - Values reflect **this machine's** tokens. Usage from another device is picked up on the next successful poll here.
-- Reset countdowns are text refreshed every poll (up to `RUNCAT_POLL_INTERVAL` stale), not a live-ticking timer, so each reset line also states the local time it falls at (`14:10`, `tomorrow 03:00`, `Mon 04:00`), which never goes stale. RunCat's menu bar is a single line, so the two menu-bar percentages are shown side by side (`55% · 55%`), not stacked.
+- Reset countdowns are text refreshed every poll (up to `RUNCAT_POLL_INTERVAL` stale), not a live-ticking timer. RunCat's menu bar is a single line, so the two menu-bar percentages are shown side by side (`55% · 55%`), not stacked.
 
 ## License
 
