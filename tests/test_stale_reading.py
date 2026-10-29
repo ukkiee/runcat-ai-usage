@@ -51,14 +51,12 @@ class StaleReadingCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        home = Path(self.tmp.name)
+        self.home = mod.ClaudeHome(Path(self.tmp.name))
 
-        self.card_path = home / "runcat-usage.json"
-        self.reading_path = home / "runcat-reading.json"
+        self.card_path = self.home.card
+        self.reading_path = self.home.reading
         self.logs = []
 
-        self.patch("CLAUDE_CARD", self.card_path)
-        self.patch("CLAUDE_READING", self.reading_path)
         self.patch("log", self.logs.append)
         mod.interface_lang.cache_clear()
         self.addCleanup(mod.interface_lang.cache_clear)
@@ -84,7 +82,7 @@ class StaleReadingCase(unittest.TestCase):
         module global — so the token-expiry stub is derived from that same `now`
         rather than from a patched clock kept in sync with it."""
         expires_at = (now * 1000 - 1) if token_expired else (now * 1000 + 60_000)
-        self.patch("claude_read_token", lambda: {
+        self.patch("claude_read_token", lambda _home: {
             "accessToken": "x", "expiresAt": expires_at,
             "rateLimitTier": "default_claude_max_20x",
         })
@@ -95,7 +93,7 @@ class StaleReadingCase(unittest.TestCase):
             return 200, response
 
         self.patch("http_get_json", fetch)
-        mod.claude_poll(now)
+        mod.claude_poll(self.home, now)
 
     def card(self):
         return json.loads(self.card_path.read_text(encoding="utf-8"))

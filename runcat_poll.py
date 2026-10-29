@@ -12,13 +12,16 @@ Designed to run on a launchd interval (every ~5 min).
 
 Card shape:
 - title carries the plan, e.g. "Claude Code Max 20x" / "Codex Pro Lite", plus the
-  home it came from for any Codex home other than ~/.codex ("Codex Pro 5x (codex2)").
+  home it came from for any home other than the default one
+  ("Codex Pro 5x (codex2)", "Claude Code Max 20x (claude-sub)").
 - each rate-limit window is two rows: the share still left (with the bar) and,
   underneath it, a bar-less "reset in <time>" line so the countdown isn't cramped
   next to the percentage. Windows are "Session" (5h) and "Weekly" (7d).
 
 Every Codex home named in RUNCAT_CODEX_HOMES (comma-separated, default ~/.codex)
-is its own account and gets its own Card beside its own auth.json.
+is its own account and gets its own Card beside its own auth.json. Claude works
+the same way with RUNCAT_CLAUDE_HOMES (default ~/.claude): each entry is a
+CLAUDE_CONFIG_DIR, and its Card sits in that directory.
 
 Claude's response becomes a Usage Reading first — every Window with a stable
 identity, a bounded used share and a Reset we can believe — and the Card is
@@ -54,6 +57,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
@@ -363,9 +367,8 @@ CLAUDE_USAGE_HEADERS = {
     "anthropic-beta": "oauth-2025-04-20",
     "User-Agent": "claude-code/2.1.69",
 }
-CLAUDE_CREDS_FILE = HOME / ".claude" / ".credentials.json"
-CLAUDE_CARD = HOME / ".claude" / "runcat-usage.json"
-CLAUDE_READING = HOME / ".claude" / "runcat-reading.json"
+CLAUDE_DEFAULT_HOME = HOME / ".claude"
+CLAUDE_HOMES_ENV = "RUNCAT_CLAUDE_HOMES"
 
 # ---- Codex constants ----
 CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
@@ -682,33 +685,106 @@ def claude_plan_label(oauth):
     return sub.capitalize() if sub else ""
 
 
-def claude_read_token():
+@dataclass(frozen=True)
+class ClaudeHome:
+    """One Claude Code login on this machine: a CLAUDE_CONFIG_DIR.
+
+    Each home is a separate account, so its Card and Reading sit inside that
+    directory and never beside another home's. `name` is empty for ~/.claude,
+    which keeps the title and log lines it has always had; any other home is
+    named after its directory ('~/.claude-sub' -> 'claude-sub').
+    """
+
+    root: Path
+    name: str = ""
+
+    @property
+    def keychain_service(self):
+        """The Keychain item Claude Code keeps this login's credential under.
+
+        ~/.claude uses the bare name. A login started with CLAUDE_CONFIG_DIR adds
+        the first 8 hex digits of the SHA-256 of that path, so the hash only
+        matches when CLAUDE_CONFIG_DIR is spelled as this absolute path (no `~`,
+        no trailing slash, no detour through a symlink).
+        """
+        if not self.name:
+            return CLAUDE_KEYCHAIN_SERVICE
+        path = unicodedata.normalize("NFC", str(self.root))
+        return f"{CLAUDE_KEYCHAIN_SERVICE}-{hashlib.sha256(path.encode('utf-8')).hexdigest()[:8]}"
+
+    @property
+    def creds_file(self):
+        return self.root / ".credentials.json"
+
+    @property
+    def card(self):
+        return self.root / "runcat-usage.json"
+
+    @property
+    def reading(self):
+        return self.root / "runcat-reading.json"
+
+    @property
+    def tag(self):
+        return log_tag("claude", self.name)
+
+
+def claude_homes(environ=None):
+    """The Claude homes to poll: RUNCAT_CLAUDE_HOMES (comma-separated) when set,
+    else ~/.claude alone.
+
+    Homes are named rather than discovered, the same as Codex homes: only a
+    directory Claude Code was actually started with has a Keychain item to read.
+
+    Paths are made absolute but not resolved through symlinks, because the
+    Keychain item name is hashed from the path as written. The same directory
+    named twice is still polled once.
+    """
+    raw = (os.environ if environ is None else environ).get(CLAUDE_HOMES_ENV, "")
+    entries = [entry.strip() for entry in raw.split(",") if entry.strip()]
+    if not entries:
+        return [ClaudeHome(CLAUDE_DEFAULT_HOME)]
+
+    default = CLAUDE_DEFAULT_HOME.expanduser().resolve()
+    homes, seen = [], set()
+    for entry in entries:
+        root = Path(os.path.abspath(os.path.expanduser(entry)))
+        if root.resolve() in seen:
+            continue
+        seen.add(root.resolve())
+        is_default = root.resolve() == default
+        homes.append(ClaudeHome(default if is_default else root,
+                                "" if is_default else root.name.lstrip(".") or str(root)))
+    return homes
+
+
+def claude_read_token(home):
     """Read the Claude OAuth blob from the login Keychain via the signed `security`
     CLI (no GUI prompt). Times out rather than hanging launchd if a prompt ever
     appears. Falls back to the file store Claude Code keeps when the Keychain is
     not its credential home (headless / remote logins write
-    `~/.claude/.credentials.json` instead). Both are read-only here.
+    `<home>/.credentials.json` instead). Both are read-only here.
     Returns the parsed claudeAiOauth dict or None."""
     try:
         out = subprocess.run(
-            ["security", "find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-w"],
+            ["security", "find-generic-password", "-s", home.keychain_service, "-w"],
             capture_output=True, text=True, timeout=15,
         )
     except subprocess.TimeoutExpired:
-        log("claude: keychain read timed out (prompt?) — skipping live poll")
+        log(f"{home.tag}: keychain read timed out (prompt?) — skipping live poll")
         return None
     if out.returncode != 0:
-        return claude_read_token_file()
+        return claude_read_token_file(home)
     try:
-        return (json.loads(out.stdout) or {}).get("claudeAiOauth") or claude_read_token_file()
+        return (json.loads(out.stdout) or {}).get("claudeAiOauth") or claude_read_token_file(home)
     except json.JSONDecodeError:
-        return claude_read_token_file()
+        return claude_read_token_file(home)
 
 
-def claude_read_token_file():
+def claude_read_token_file(home):
     """The same OAuth blob as the Keychain carries, from Claude Code's file store."""
     try:
-        blob = json.loads(CLAUDE_CREDS_FILE.read_text())
+        blob = json.loads(home.creds_file.read_text())
     except (OSError, json.JSONDecodeError):
         return None
     return (blob or {}).get("claudeAiOauth") or None
@@ -809,28 +885,28 @@ def claude_reading(body, plan, now):
                         windows=tuple(windows), captured_at=now)
 
 
-def claude_recover(why, now):
-    return recover_card("claude", why, CLAUDE_CARD, CLAUDE_READING, now)
+def claude_recover(home, why, now):
+    return recover_card("claude", why, home.card, home.reading, now, home.name)
 
 
-def claude_poll(now):
-    oauth = claude_read_token()
+def claude_poll(home, now):
+    oauth = claude_read_token(home)
     token = (oauth or {}).get("accessToken") or ""
     expires_at = (oauth or {}).get("expiresAt")  # epoch ms
     token_ok = bool(token) and (not isinstance(expires_at, (int, float)) or expires_at > now * 1000)
 
     if not token_ok:
         # Expired / unreadable: never refresh (keychain-write unsafe). Recover.
-        claude_recover("token expired/absent", now)
+        claude_recover(home, "token expired/absent", now)
         return
 
     headers = dict(CLAUDE_USAGE_HEADERS, Authorization=f"Bearer {token.strip()}")
-    ok, body = fetch_usage(CLAUDE_USAGE_URL, headers, claude_recover, now)
+    ok, body = fetch_usage(CLAUDE_USAGE_URL, headers, functools.partial(claude_recover, home), now)
     if not ok:
         return
 
-    publish("claude", "usage response", CLAUDE_CARD, CLAUDE_READING,
-            claude_reading(body, claude_plan_label(oauth), now), now)
+    publish("claude", "usage response", home.card, home.reading,
+            claude_reading(body, claude_plan_label(oauth), now), now, home.name)
 
 
 # ----------------------------- Codex -----------------------------
@@ -1134,7 +1210,7 @@ def main():
     # timestamps (log lines, last_refresh, the rotation-loss marker) read the
     # real wall clock via stamp() instead — see decision 3 of the design.
     now = datetime.now(timezone.utc).timestamp()
-    polls = [("claude", claude_poll)]
+    polls = [(home.tag, functools.partial(claude_poll, home)) for home in claude_homes()]
     polls += [(home.tag, functools.partial(codex_poll, home)) for home in codex_homes()]
     # One login failing must not cost the others their Card.
     for name, fn in polls:

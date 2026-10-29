@@ -17,7 +17,7 @@ fi
 # launchd starts the poller without a login shell, so settings exported when
 # installing are written into the agent itself.
 ENV_XML=""
-for key in RUNCAT_CODEX_HOMES RUNCAT_LANG; do
+for key in RUNCAT_CLAUDE_HOMES RUNCAT_CODEX_HOMES RUNCAT_LANG; do
   value="${!key:-}"
   [ -n "$value" ] || continue
   value="${value//&/&amp;}"; value="${value//</&lt;}"; value="${value//>/&gt;}"
@@ -57,7 +57,15 @@ launchctl kickstart -k "gui/$(id -u)/$LABEL"
 echo "Installed launchd agent: $LABEL (every ${INTERVAL}s)"
 echo
 echo "Next: RunCat Neo -> Settings -> Metrics -> Custom Metrics -> Add Custom Metrics Source"
-echo "  ~/.claude/runcat-usage.json   (Claude Code)"
+if [ -n "${RUNCAT_CLAUDE_HOMES:-}" ]; then
+  IFS=',' read -ra CLAUDE_HOMES <<< "$RUNCAT_CLAUDE_HOMES"
+  for home in "${CLAUDE_HOMES[@]}"; do
+    home="$(echo "$home" | xargs)"
+    [ -n "$home" ] && echo "  ${home%/}/runcat-usage.json   (Claude Code)"
+  done
+else
+  echo "  ~/.claude/runcat-usage.json   (Claude Code)"
+fi
 if [ -n "${RUNCAT_CODEX_HOMES:-}" ]; then
   IFS=',' read -ra CODEX_HOMES <<< "$RUNCAT_CODEX_HOMES"
   for home in "${CODEX_HOMES[@]}"; do

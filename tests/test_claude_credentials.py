@@ -39,16 +39,16 @@ class FakeSubprocess:
 
 
 class ClaudeCredentialCase(unittest.TestCase):
-    """A temporary ~/.claude holding the file store, with module state restored."""
+    """A temporary Claude home holding the file store, with module state restored."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-        self.creds_path = Path(self.tmp.name) / ".credentials.json"
+        self.home = mod.ClaudeHome(Path(self.tmp.name))
+        self.creds_path = self.home.creds_file
         self.logs = []
         self.write_file_store()
-        self.patch("CLAUDE_CREDS_FILE", self.creds_path)
         self.patch("log", self.logs.append)
 
     def patch(self, name, value):
@@ -83,28 +83,28 @@ class ClaudeReadTokenTest(ClaudeCredentialCase):
         Claude Code keeps current on a desktop login."""
         self.patch_keychain(0, json.dumps({"claudeAiOauth": KEYCHAIN_OAUTH}))
 
-        self.assertEqual(mod.claude_read_token(), KEYCHAIN_OAUTH)
+        self.assertEqual(mod.claude_read_token(self.home), KEYCHAIN_OAUTH)
 
     def test_the_file_store_answers_when_the_keychain_has_no_item(self):
         self.patch_keychain(44)  # `security`'s "item could not be found"
 
-        self.assertEqual(mod.claude_read_token(), FILE_OAUTH)
+        self.assertEqual(mod.claude_read_token(self.home), FILE_OAUTH)
 
     def test_a_keychain_blob_without_the_oauth_field_falls_through(self):
         self.patch_keychain(0, json.dumps({"somethingElse": {}}))
 
-        self.assertEqual(mod.claude_read_token(), FILE_OAUTH)
+        self.assertEqual(mod.claude_read_token(self.home), FILE_OAUTH)
 
     def test_keychain_output_we_cannot_read_falls_through(self):
         self.patch_keychain(0, "not json at all")
 
-        self.assertEqual(mod.claude_read_token(), FILE_OAUTH)
+        self.assertEqual(mod.claude_read_token(self.home), FILE_OAUTH)
 
     def test_neither_store_holding_it_reads_as_absent(self):
         self.patch_keychain(44)
         self.creds_path.unlink()
 
-        self.assertIsNone(mod.claude_read_token())
+        self.assertIsNone(mod.claude_read_token(self.home))
 
     def test_a_file_store_we_cannot_read_reads_as_absent(self):
         """Unreadable is not the same as empty, but neither yields a token, and
@@ -112,13 +112,13 @@ class ClaudeReadTokenTest(ClaudeCredentialCase):
         self.patch_keychain(44)
         self.creds_path.write_text("{ this is not json", encoding="utf-8")
 
-        self.assertIsNone(mod.claude_read_token())
+        self.assertIsNone(mod.claude_read_token(self.home))
 
     def test_a_file_store_without_the_oauth_field_reads_as_absent(self):
         self.patch_keychain(44)
         self.write_file_store({"somethingElse": {}})
 
-        self.assertIsNone(mod.claude_read_token())
+        self.assertIsNone(mod.claude_read_token(self.home))
 
     def test_a_keychain_prompt_is_not_answered_by_the_file_store(self):
         """A prompt means the Keychain does hold the item — the read is blocked,
@@ -126,7 +126,7 @@ class ClaudeReadTokenTest(ClaudeCredentialCase):
         here would poll with whatever stale copy the file store still holds."""
         self.patch_keychain_prompt()
 
-        self.assertIsNone(mod.claude_read_token())
+        self.assertIsNone(mod.claude_read_token(self.home))
         self.assertIn("keychain read timed out", self.log_text)
 
 
@@ -137,7 +137,7 @@ class ClaudeCredentialWriteTest(ClaudeCredentialCase):
         before = self.creds_path.read_bytes()
         self.patch_keychain(44)
 
-        mod.claude_read_token()
+        mod.claude_read_token(self.home)
 
         self.assertEqual(self.creds_path.read_bytes(), before)
 

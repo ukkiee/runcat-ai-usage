@@ -26,12 +26,12 @@ Labels auto-switch between English and Korean based on your macOS language (see 
 RunCat Neo can render any local JSON file as a custom-metrics card. This project ships a small Python poller that a `launchd` agent runs every 5 minutes via `runcat-poll.py`. Each run it:
 
 1. Reuses the OAuth credentials **already on your machine** (no separate login):
-   - **Claude** — read from the login Keychain (`Claude Code-credentials`) via Apple's signed `security` CLI, falling back to `~/.claude/.credentials.json` where Claude Code keeps the credential in a file instead (headless / remote logins).
+   - **Claude** — read from the login Keychain (`Claude Code-credentials`) via Apple's signed `security` CLI, falling back to `~/.claude/.credentials.json` where Claude Code keeps the credential in a file instead (headless / remote logins). Every Claude home listed in `RUNCAT_CLAUDE_HOMES` is read the same way (see [Several Claude accounts](#several-claude-accounts)).
    - **Codex** — read from `~/.codex/auth.json`, or from the `auth.json` of every Codex home listed in `RUNCAT_CODEX_HOMES` (see [Several Codex accounts](#several-codex-accounts)).
 2. Calls each provider's **dedicated usage endpoint** — a plain metadata `GET`, **not** a model request, so it costs **no tokens** and doesn't touch your rate limits:
    - Claude: `GET https://api.anthropic.com/api/oauth/usage`
    - Codex: `GET https://chatgpt.com/backend-api/wham/usage`
-3. Writes `~/.claude/runcat-usage.json` and a `runcat-usage.json` in each Codex home (`~/.codex/runcat-usage.json` by default), which RunCat Neo watches and renders.
+3. Writes a `runcat-usage.json` in each Claude home (`~/.claude/runcat-usage.json` by default) and in each Codex home (`~/.codex/runcat-usage.json` by default), which RunCat Neo watches and renders.
 
 The numbers are the real, account-wide values (the same ones the official apps show), available even when the apps are closed.
 
@@ -71,6 +71,18 @@ RUNCAT_CODEX_HOMES="~/.codex,~/.codex2" ./install.sh
 
 Each home gets its own card beside its own `auth.json`, so add `~/.codex2/runcat-usage.json` in RunCat Neo as well. A card from any home other than `~/.codex` carries the directory name in its title (`Codex Pro 5x (codex2)`). Homes are never discovered on their own: a backup copy of `auth.json` would otherwise be refreshed and sign the real login out.
 
+### Several Claude accounts
+
+If you run a second Claude Code login with its own config directory (e.g. `CLAUDE_CONFIG_DIR=$HOME/.claude-sub claude`), list every home when installing:
+
+```sh
+RUNCAT_CLAUDE_HOMES="~/.claude,~/.claude-sub" ./install.sh
+```
+
+Add `~/.claude-sub/runcat-usage.json` in RunCat Neo as well; its card is titled `Claude Code Max 20x (claude-sub)`. Claude Code stores that login in a Keychain item named after a hash of the directory path (`Claude Code-credentials-<8 hex>`), so `CLAUDE_CONFIG_DIR` must be the plain absolute path: no trailing slash, and not reached through a symlink, or the poller looks for an item that does not exist. As with the default login, the card stays live only while that login's token is valid, which means using that account within roughly the last hour.
+
+When you reinstall, pass every variable you set before (`RUNCAT_CLAUDE_HOMES`, `RUNCAT_CODEX_HOMES`) again, since `install.sh` rewrites the agent from scratch.
+
 ### Uninstall
 
 ```sh
@@ -81,11 +93,12 @@ Removes the `launchd` agent and the poller's own state files. The `runcat-usage.
 
 ## Configuration
 
-Environment variables (export `RUNCAT_CODEX_HOMES` / `RUNCAT_LANG` when running `install.sh` and it writes them into the `launchd` plist, or export them before a manual run):
+Environment variables (export `RUNCAT_CLAUDE_HOMES` / `RUNCAT_CODEX_HOMES` / `RUNCAT_LANG` when running `install.sh` and it writes them into the `launchd` plist, or export them before a manual run):
 
 | Variable | Default | Effect |
 |---|---|---|
 | `RUNCAT_LANG` | auto (macOS UI language) | `ko` or `en` to force the card language. |
+| `RUNCAT_CLAUDE_HOMES` | `~/.claude` | Comma-separated Claude Code config directories to poll, one card each. |
 | `RUNCAT_CODEX_HOMES` | `~/.codex` | Comma-separated Codex homes to poll, one card each. |
 | `RUNCAT_POLL_INTERVAL` | `300` | Poll interval in seconds (install-time only). |
 

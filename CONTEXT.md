@@ -11,7 +11,7 @@ A service whose rate-limit usage this tool tracks. Currently Claude Code and Cod
 _Avoid_: vendor, backend, service, source
 
 **Account**:
-One login to a Provider. Codex can hold several on one machine, one per Codex home (`CODEX_HOME`); each Account has its own credential, Usage Reading and Card.
+One login to a Provider. Both Providers can hold several on one machine, one per home: a Codex home (`CODEX_HOME`) or a Claude Code config directory (`CLAUDE_CONFIG_DIR`). Each Account has its own credential, Usage Reading and Card.
 _Avoid_: profile, user, instance
 
 **Plan**:

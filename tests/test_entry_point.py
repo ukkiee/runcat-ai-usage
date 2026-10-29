@@ -44,12 +44,15 @@ class EntryPointTest(unittest.TestCase):
         stubs take `now` — and record it, turning what would be a TypeError into
         positive proof the clock reaches the seam as one shared number.
 
-        Codex is polled once per configured home, each with its own home."""
+        Each Provider is polled once per configured home, each with its own home."""
         polled = []
+        claude_homes = [runcat_poll.ClaudeHome(Path("/nowhere/.claude")),
+                        runcat_poll.ClaudeHome(Path("/nowhere/.claude-sub"), "claude-sub")]
         homes = [runcat_poll.CodexHome(Path("/nowhere/.codex")),
                  runcat_poll.CodexHome(Path("/nowhere/.codex2"), "codex2")]
         stubs = {
-            "claude_poll": lambda now: polled.append(("claude_poll", now)),
+            "claude_poll": lambda home, now: polled.append((f"claude_poll:{home.name}", now)),
+            "claude_homes": lambda: claude_homes,
             "codex_poll": lambda home, now: polled.append((f"codex_poll:{home.name}", now)),
             "codex_homes": lambda: homes,
         }
@@ -61,8 +64,9 @@ class EntryPointTest(unittest.TestCase):
         runpy.run_path(str(ENTRY_POINT), run_name="__main__")
 
         self.assertEqual(
-            [n for n, _ in polled], ["claude_poll", "codex_poll:", "codex_poll:codex2"],
-            "the entry point did not poll Claude and every Codex home",
+            [n for n, _ in polled],
+            ["claude_poll:", "claude_poll:claude-sub", "codex_poll:", "codex_poll:codex2"],
+            "the entry point did not poll every Claude and every Codex home",
         )
         self.assertTrue(
             all(isinstance(now, float) for _, now in polled),

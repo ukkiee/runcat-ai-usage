@@ -26,12 +26,12 @@ Claude Code Max 20x            메뉴바: 55% · 55%
 RunCat Neo는 로컬 JSON 파일을 커스텀 메트릭 카드로 렌더링할 수 있습니다. 이 프로젝트는 작은 파이썬 폴러를 담고 있고, `launchd` 에이전트가 `runcat-poll.py`를 통해 5분마다 실행합니다. 실행할 때마다:
 
 1. **이미 이 맥에 있는 OAuth 자격증명을 재사용**합니다(별도 로그인 불필요):
-   - **Claude** — 로그인 키체인(`Claude Code-credentials`)에서 Apple 서명된 `security` CLI로 읽고, Claude Code가 자격증명을 파일에 두는 환경(헤드리스·원격 로그인)에서는 `~/.claude/.credentials.json`으로 폴백
+   - **Claude** — 로그인 키체인(`Claude Code-credentials`)에서 Apple 서명된 `security` CLI로 읽고, Claude Code가 자격증명을 파일에 두는 환경(헤드리스·원격 로그인)에서는 `~/.claude/.credentials.json`으로 폴백. `RUNCAT_CLAUDE_HOMES`를 지정했다면 나열된 Claude 홈마다 같은 방식으로 읽음([여러 Claude 계정](#여러-claude-계정) 참고)
    - **Codex** — `~/.codex/auth.json`에서 읽고, `RUNCAT_CODEX_HOMES`를 지정했다면 나열된 Codex 홈마다 각자의 `auth.json`에서 읽음([여러 Codex 계정](#여러-codex-계정) 참고)
 2. 각 서비스의 **전용 usage 엔드포인트**를 호출합니다. 모델 요청이 **아니라** 단순 메타데이터 `GET`이라 **토큰을 전혀 소모하지 않고** rate limit에도 영향을 주지 않습니다:
    - Claude: `GET https://api.anthropic.com/api/oauth/usage`
    - Codex: `GET https://chatgpt.com/backend-api/wham/usage`
-3. `~/.claude/runcat-usage.json`과 각 Codex 홈의 `runcat-usage.json`(기본값은 `~/.codex/runcat-usage.json`)을 씁니다. RunCat Neo가 이 파일들을 감시하다가 변경되면 카드를 갱신합니다.
+3. 각 Claude 홈(기본값 `~/.claude`)과 각 Codex 홈(기본값 `~/.codex`)에 `runcat-usage.json`을 씁니다. RunCat Neo가 이 파일들을 감시하다가 변경되면 카드를 갱신합니다.
 
 표시되는 값은 공식 앱이 보여주는 것과 동일한 **계정 단위 실측값**이며, 앱이 꺼져 있어도 조회됩니다.
 
@@ -71,6 +71,18 @@ RUNCAT_CODEX_HOMES="~/.codex,~/.codex2" ./install.sh
 
 홈마다 자기 `auth.json` 옆에 카드가 따로 생기므로, RunCat Neo에 `~/.codex2/runcat-usage.json`도 추가해야 합니다. `~/.codex`가 아닌 홈의 카드는 제목에 디렉터리 이름이 붙습니다(`Codex Pro 5x (codex2)`). 홈을 자동으로 찾지는 않습니다. 자동으로 찾으면 `auth.json` 백업 사본까지 토큰을 갱신하게 되고, 그러면 실제 로그인이 풀리기 때문입니다.
 
+### 여러 Claude 계정
+
+설정 디렉터리를 따로 둔 Claude Code 로그인을 하나 더 쓰고 있다면(예: `CLAUDE_CONFIG_DIR=$HOME/.claude-sub claude`), 설치할 때 모든 홈을 나열합니다:
+
+```sh
+RUNCAT_CLAUDE_HOMES="~/.claude,~/.claude-sub" ./install.sh
+```
+
+RunCat Neo에 `~/.claude-sub/runcat-usage.json`도 추가해야 하고, 카드 제목은 `Claude Code Max 20x (claude-sub)`가 됩니다. Claude Code는 이 로그인을 디렉터리 경로의 해시가 붙은 키체인 항목(`Claude Code-credentials-<16진수 8자리>`)에 저장합니다. 그래서 `CLAUDE_CONFIG_DIR`은 끝에 `/` 없이, 심링크를 거치지 않은 절대 경로여야 합니다. 그렇지 않으면 폴러가 존재하지 않는 항목을 찾게 됩니다. 기본 로그인과 마찬가지로, 그 계정을 대략 최근 1시간 안에 써서 토큰이 유효할 때만 실측값이 표시됩니다.
+
+다시 설치할 때는 예전에 지정한 변수(`RUNCAT_CLAUDE_HOMES`, `RUNCAT_CODEX_HOMES`)를 모두 다시 넘기세요. `install.sh`가 에이전트를 처음부터 새로 쓰기 때문입니다.
+
 ### 제거
 
 ```sh
@@ -81,11 +93,12 @@ RUNCAT_CODEX_HOMES="~/.codex,~/.codex2" ./install.sh
 
 ## 설정
 
-환경 변수 (`install.sh`를 실행할 때 `RUNCAT_CODEX_HOMES` / `RUNCAT_LANG`을 지정하면 `launchd` plist에 기록되고, 수동으로 실행할 때는 export):
+환경 변수 (`install.sh`를 실행할 때 `RUNCAT_CLAUDE_HOMES` / `RUNCAT_CODEX_HOMES` / `RUNCAT_LANG`을 지정하면 `launchd` plist에 기록되고, 수동으로 실행할 때는 export):
 
 | 변수 | 기본값 | 효과 |
 |---|---|---|
 | `RUNCAT_LANG` | 자동 (macOS 시스템 언어) | `ko` 또는 `en`으로 카드 언어 강제 지정 |
+| `RUNCAT_CLAUDE_HOMES` | `~/.claude` | 조회할 Claude Code 설정 디렉터리 목록(쉼표 구분). 홈마다 카드가 하나씩 생김 |
 | `RUNCAT_CODEX_HOMES` | `~/.codex` | 조회할 Codex 홈 목록(쉼표 구분). 홈마다 카드가 하나씩 생김 |
 | `RUNCAT_POLL_INTERVAL` | `300` | 폴링 주기(초). 설치 시점에만 적용 |
 
