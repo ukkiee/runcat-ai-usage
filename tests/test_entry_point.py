@@ -61,8 +61,10 @@ class EntryPointTest(unittest.TestCase):
             setattr(runcat_poll, name, stub)
             self.addCleanup(setattr, runcat_poll, name, original)
 
-        runpy.run_path(str(ENTRY_POINT), run_name="__main__")
+        with self.assertRaises(SystemExit) as finished:
+            runpy.run_path(str(ENTRY_POINT), run_name="__main__")
 
+        self.assertIn(finished.exception.code, (None, 0), "a poll must exit successfully")
         self.assertEqual(
             [n for n, _ in polled],
             ["claude_poll:", "claude_poll:claude-sub", "codex_poll:", "codex_poll:codex2"],
@@ -86,6 +88,15 @@ class EntryPointTest(unittest.TestCase):
             cwd="/", capture_output=True, text=True, timeout=60,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+    def test_entry_point_exits_with_the_status_main_returns(self):
+        """A refused toggle must fail in the shell, not print an error and exit 0."""
+        result = subprocess.run(
+            [sys.executable, str(ENTRY_POINT), "toggle"],
+            cwd="/", capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
 
 
 class ImportableImplementationTest(unittest.TestCase):

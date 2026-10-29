@@ -1298,6 +1298,24 @@ def agent_environment():
     return env if isinstance(env, dict) else {}
 
 
+def stored_readings():
+    """Every home's last Reading, for the homes the installed agent polls."""
+    environ = agent_environment() or os.environ
+    homes = [("claude", home) for home in claude_homes(environ)]
+    homes += [("codex", home) for home in codex_homes(environ)]
+    for provider, home in homes:
+        reading = reading_from_json(load_json(home.reading))
+        if reading is not None and reading.provider == provider:
+            yield home, reading
+
+
+def scoped_models():
+    """Each model with its own limit in a stored Reading, keyed by casefolded name."""
+    return {window.label.casefold(): window.label
+            for _home, reading in stored_readings() for window in reading.windows
+            if window.id.startswith(SCOPED_WINDOW_PREFIX) and window.label}
+
+
 def rerender_cards(now):
     """Rebuild every Card from its stored Reading, for a change to how Cards look
     rather than to the numbers. No request goes out and no credential is touched,
@@ -1306,13 +1324,7 @@ def rerender_cards(now):
     It does not ask the agent to poll instead because launchd drops a start
     request that arrives while the agent is still running, and a second toggle
     right after the first would then never show."""
-    environ = agent_environment() or os.environ
-    homes = [("claude", home) for home in claude_homes(environ)]
-    homes += [("codex", home) for home in codex_homes(environ)]
-    for provider, home in homes:
-        stale = reading_from_json(load_json(home.reading))
-        if stale is None or stale.provider != provider:
-            continue
+    for home, stale in stored_readings():
         card = render_card(decay(stale, now), label_set(), now, home.account, hidden_models())
         if card is not None:
             write_atomic(home.card, card)
@@ -1324,6 +1336,15 @@ def toggle_command(args):
               file=sys.stderr)
         return 2
     name = args[0].strip()
+    models = scoped_models()
+    # A misspelled name would hide nothing yet print "hidden", so only a model
+    # some Card shows can be hidden. A name already hidden can always be shown,
+    # which is also how an old typo gets cleared.
+    if name.casefold() not in models and name.casefold() not in hidden_models():
+        known = ", ".join(sorted(models.values())) or "none yet"
+        print(f"{name}: no card has a limit for this model (models: {known})", file=sys.stderr)
+        return 1
+    name = models.get(name.casefold(), name)
     hidden, names = toggle_model(name)
     rerender_cards(datetime.now(timezone.utc).timestamp())
     print(f"{name}: {'hidden' if hidden else 'shown'}"

@@ -28,4 +28,4 @@ if _HERE not in sys.path:
 from runcat_poll import main  # noqa: E402 — the lines above are what make this resolvable
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

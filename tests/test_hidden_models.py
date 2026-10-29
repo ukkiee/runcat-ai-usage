@@ -3,7 +3,8 @@
 `./toggle.sh Fable` (or `runcat-poll.py toggle Fable`) flips the model in a
 small settings file and redraws every Card from its stored Reading. Only the
 Card changes: the Reading keeps the Window, so showing it again needs nothing but
-a render.
+a render. A name no stored Reading has is refused, so a typo cannot pass for
+success.
 """
 
 import io
@@ -120,18 +121,23 @@ class ToggleTest(Case):
 class CommandTest(Case):
     def run_main(self, *argv):
         polled = []
+        home = mod.ClaudeHome(self.dir / ".claude")
+        home.root.mkdir(exist_ok=True)
+        mod.write_atomic(home.reading, mod.reading_as_json(reading()))
 
         def claude_homes(environ=None):
             if environ is None:  # only a poll reads the homes from its own environment
                 polled.append("poll")
-            return []
+                return []
+            return [home]
 
         self.patch("claude_homes", claude_homes)
         self.patch("codex_homes", lambda environ=None: [])
         self.patch("AGENT_PLIST", self.dir / "absent.plist")
-        out = io.StringIO()
-        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
             code = mod.main(list(argv))
+        self.err = err.getvalue()
         return code, out.getvalue(), polled
 
     def test_toggle_flips_the_setting_and_does_not_poll_itself(self):
@@ -166,6 +172,30 @@ class CommandTest(Case):
         self.assertEqual(mod.agent_environment(),
                          {"RUNCAT_CLAUDE_HOMES": "~/.claude,~/.claude-sub"})
 
+    def test_a_misspelled_model_is_refused_and_changes_nothing(self):
+        code, _out, _polled = self.run_main("toggle", "fabel")
+
+        self.assertEqual(code, 1)
+        self.assertIn("(models: Fable)", self.err)
+        self.assertFalse(mod.SETTINGS_FILE.exists())
+
+    def test_a_model_is_kept_under_the_name_its_card_shows(self):
+        _code, out, _polled = self.run_main("toggle", "fable")
+
+        self.assertIn("Fable: hidden", out)
+        self.assertEqual(json.loads(mod.SETTINGS_FILE.read_text(encoding="utf-8")),
+                         {"hiddenModels": ["Fable"]})
+
+    def test_a_hidden_name_no_card_has_can_still_be_shown(self):
+        """How a typo saved before names were checked gets cleared."""
+        self.settings({"hiddenModels": ["fabel"]})
+
+        code, out, _polled = self.run_main("toggle", "fabel")
+
+        self.assertEqual(code, 0, self.err)
+        self.assertIn("fabel: shown", out)
+        self.assertEqual(mod.hidden_models(), frozenset())
+
     def test_toggle_without_a_model_changes_nothing(self):
         code, _out, polled = self.run_main("toggle")
 
@@ -189,6 +219,9 @@ class ScriptTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name)
         self.settings = self.home / ".config" / "runcat-ai-usage" / "settings.json"
+        (self.home / ".claude").mkdir()
+        (self.home / ".claude" / "runcat-reading.json").write_text(
+            json.dumps(mod.reading_as_json(reading())), encoding="utf-8")
 
     def run_script(self, *args):
         env = {k: v for k, v in os.environ.items() if not k.startswith("RUNCAT_")}
@@ -215,6 +248,13 @@ class ScriptTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2)
         self.assertIn("toggle.sh <model>", result.stderr)
+        self.assertFalse(self.settings.exists())
+
+    def test_the_script_refuses_a_misspelled_model(self):
+        result = self.run_script("fabel")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("(models: Fable)", result.stderr)
         self.assertFalse(self.settings.exists())
 
     def test_the_script_is_executable(self):

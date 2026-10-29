@@ -97,7 +97,7 @@ A per-model weekly limit such as `Fable` can be taken off every card and brought
 ./toggle.sh Fable   # hide; run again to show
 ```
 
-The cards are redrawn from the last poll at once, without a network request. The choice is kept in `~/.config/runcat-ai-usage/settings.json`, and the poller keeps recording the hidden limit, so showing it again is instant too. Only per-model limits can be hidden; Session and Weekly always stay.
+The cards are redrawn from the last poll at once, without a network request. The choice is kept in `~/.config/runcat-ai-usage/settings.json`, and the poller keeps recording the hidden limit, so showing it again is instant too. Only per-model limits can be hidden; Session and Weekly always stay. A name no card shows, such as a typo, is refused.
 
 ### Uninstall
 
