@@ -89,6 +89,16 @@ Every card's first row names its home after its directory (`claude: Max 20x`, `c
 
 When you reinstall, pass every variable you set before (`RUNCAT_CLAUDE_HOMES`, `RUNCAT_CODEX_HOMES`) again, since `install.sh` rewrites the agent from scratch.
 
+### Hiding a model's limit
+
+A per-model weekly limit such as `Fable` can be taken off every card and brought back with one command:
+
+```sh
+python3 ~/path/to/runcat-ai-usage/runcat-poll.py toggle Fable   # hide; run again to show
+```
+
+The cards are redrawn from the last poll at once, without a network request. The choice is kept in `~/.config/runcat-ai-usage/settings.json`, and the poller keeps recording the hidden limit, so showing it again is instant too. Only per-model limits can be hidden; Session and Weekly always stay.
+
 ### Uninstall
 
 ```sh

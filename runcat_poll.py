@@ -53,6 +53,7 @@ import hashlib
 import json
 import math
 import os
+import plistlib
 import re
 import subprocess
 import sys
@@ -575,7 +576,31 @@ def finalize(title, symbol, metrics, bar_value, now):
     return card
 
 
-def render_card(reading, labels, now, account=""):
+# Where `toggle` keeps the models whose Window the Cards leave out.
+SETTINGS_FILE = HOME / ".config" / "runcat-ai-usage" / "settings.json"
+# What install.sh writes; it carries the homes the agent polls.
+AGENT_PLIST = HOME / "Library" / "LaunchAgents" / "io.github.ukkiee.runcat-ai-usage.plist"
+
+
+def hidden_models():
+    """The model names whose Model-Scoped Window the Cards leave out, casefolded.
+
+    Read on every render rather than once at start, so a toggle shows on the very
+    next poll. A settings file we cannot read hides nothing."""
+    data = load_json(SETTINGS_FILE)
+    names = data.get("hiddenModels") if isinstance(data, dict) else None
+    if not isinstance(names, list):
+        return frozenset()
+    return frozenset(name.casefold() for name in names if isinstance(name, str))
+
+
+def is_hidden(window, hidden):
+    """Only a Model-Scoped Window can be hidden: Session and Weekly carry the
+    menu-bar numbers, and a Card without them would say nothing."""
+    return window.id.startswith(SCOPED_WINDOW_PREFIX) and window.label.casefold() in hidden
+
+
+def render_card(reading, labels, now, account="", hidden=frozenset()):
     """A Usage Reading as the Card RunCat Neo reads.
 
     The clock and the label set are handed in, so the same Reading renders the
@@ -586,10 +611,11 @@ def render_card(reading, labels, now, account=""):
 
     `account` names which of a Provider's logins the Reading belongs to. It comes
     from where the Reading was read, never from the Reading, so it is handed in
-    the same way the clock is.
+    the same way the clock is. `hidden` is the set of model names left off the
+    Card; the Reading keeps their Windows, so showing one again needs no poll.
     """
     windows = [window_rows(window_title(window, labels), window.used, window.resets_at, labels, now)
-               for window in reading.windows]
+               for window in reading.windows if not is_hidden(window, hidden)]
     if not any(windows):
         return None
     metrics = join_blocks([account_rows(reading.plan, account, labels), *windows])
@@ -619,7 +645,7 @@ def recover_card(provider, why, card_path, reading_path, now, account=""):
     recovery — Windows are matched by identity, never by the row title on screen.
     """
     stale = reading_from_json(load_json(reading_path))
-    card = render_card(decay(stale, now), label_set(), now, account) if stale else None
+    card = render_card(decay(stale, now), label_set(), now, account, hidden_models()) if stale else None
     tag = log_tag(provider, account)
     if card is None:
         log(f"{tag}: {why} — no Stale Reading to rebuild from, keeping last-good")
@@ -649,7 +675,7 @@ def publish(provider, why, card_path, reading_path, reading, now, account=""):
     if reading is None:
         return  # unreconcilable response; the mapper has already logged why
     reading = carry_forward_resets(reading, reading_from_json(load_json(reading_path)), now)
-    card = render_card(reading, label_set(), now, account)
+    card = render_card(reading, label_set(), now, account, hidden_models())
     tag = log_tag(provider, account)
     if card is None:
         log(f"{tag}: {why} had no windows — keeping last-good")
@@ -1248,7 +1274,71 @@ def codex_poll(home, now):
 
 # ----------------------------- main -----------------------------
 
-def main():
+def toggle_model(name):
+    """Hide a model's Window on every Card, or show it again if it is hidden.
+    Matching ignores case. Returns (hidden now?, every hidden name)."""
+    data = load_json(SETTINGS_FILE)
+    data = data if isinstance(data, dict) else {}
+    names = [n for n in data.get("hiddenModels") or [] if isinstance(n, str)]
+    shown = [n for n in names if n.casefold() != name.casefold()]
+    hidden = len(shown) == len(names)
+    data["hiddenModels"] = shown + [name] if hidden else shown
+    write_atomic(SETTINGS_FILE, data)
+    return hidden, data["hiddenModels"]
+
+
+def agent_environment():
+    """The environment the installed agent polls with. install.sh writes the
+    homes there, and a shell running `toggle` usually does not have them."""
+    try:
+        with open(AGENT_PLIST, "rb") as f:
+            env = plistlib.load(f).get("EnvironmentVariables")
+    except Exception:
+        return {}
+    return env if isinstance(env, dict) else {}
+
+
+def rerender_cards(now):
+    """Rebuild every Card from its stored Reading, for a change to how Cards look
+    rather than to the numbers. No request goes out and no credential is touched,
+    so it is instant and safe to run while the agent is polling.
+
+    It does not ask the agent to poll instead because launchd drops a start
+    request that arrives while the agent is still running, and a second toggle
+    right after the first would then never show."""
+    environ = agent_environment() or os.environ
+    homes = [("claude", home) for home in claude_homes(environ)]
+    homes += [("codex", home) for home in codex_homes(environ)]
+    for provider, home in homes:
+        stale = reading_from_json(load_json(home.reading))
+        if stale is None or stale.provider != provider:
+            continue
+        card = render_card(decay(stale, now), label_set(), now, home.account, hidden_models())
+        if card is not None:
+            write_atomic(home.card, card)
+
+
+def toggle_command(args):
+    if len(args) != 1 or not args[0].strip():
+        print("usage: runcat-poll.py toggle <model>    e.g. runcat-poll.py toggle Fable",
+              file=sys.stderr)
+        return 2
+    name = args[0].strip()
+    hidden, names = toggle_model(name)
+    rerender_cards(datetime.now(timezone.utc).timestamp())
+    print(f"{name}: {'hidden' if hidden else 'shown'}"
+          + (f" (hidden: {', '.join(names)})" if names else ""))
+    return 0
+
+
+def main(argv=None):
+    """Poll every home, or with `toggle <model>` hide or show that model's Window.
+
+    launchd runs this with no arguments. Anything other than `toggle` polls, so a
+    caller that happens to carry its own arguments (a test runner) still polls."""
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["toggle"]:
+        return toggle_command(argv[1:])
     # One clock per tick, read once here at the single place a poll begins and
     # handed to both Providers, so a Card, its persisted Reading and its
     # countdowns are all derived from the same instant. The side-effect
