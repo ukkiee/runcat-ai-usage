@@ -5,18 +5,21 @@
 **Claude Code**와 **Codex**의 남은 한도 — 세션 / 주간 / 모델별 한도와 리셋까지 남은 시간 — 를 [RunCat Neo](https://github.com/runcat-dev/RunCatNeo) 대시보드 카드와 메뉴바 미터로 보여줍니다.
 
 ```
-Claude Code Max 20x            메뉴바: 55% · 55%
+Claude                         메뉴바: 55% · 55%
+ Max 20x
   현재 세션: 55% 남음
   ▓▓▓▓▓░░░░░
-  재설정: 1시간 53분 후
+  재설정: 1시간 53분 후 · 14:10
 
   주간 한도: 55% 남음
   ▓▓▓▓▓░░░░░
-  재설정: 4일 9시간 후
+  재설정: 4일 9시간 후 · 월 04:00
 
   Fable: 55% 남음
   ▓▓▓▓▓░░░░░
-  재설정: 4일 9시간 후
+  재설정: 4일 9시간 후 · 월 04:00
+
+  마지막 업데이트: 지금
 ```
 
 라벨은 macOS 시스템 언어에 따라 한국어/영어로 자동 전환됩니다 ([설정](#설정) 참고).
@@ -69,7 +72,7 @@ Codex 계정을 홈 디렉터리별로 나눠 쓰고 있다면(예: `CODEX_HOME=
 RUNCAT_CODEX_HOMES="~/.codex,~/.codex2" ./install.sh
 ```
 
-홈마다 자기 `auth.json` 옆에 카드가 따로 생기므로, RunCat Neo에 `~/.codex2/runcat-usage.json`도 추가해야 합니다. `~/.codex`가 아닌 홈의 카드는 제목에 디렉터리 이름이 붙습니다(`Codex Pro 5x (codex2)`). 홈을 자동으로 찾지는 않습니다. 자동으로 찾으면 `auth.json` 백업 사본까지 토큰을 갱신하게 되고, 그러면 실제 로그인이 풀리기 때문입니다.
+홈마다 자기 `auth.json` 옆에 카드가 따로 생기므로, RunCat Neo에 `~/.codex2/runcat-usage.json`도 추가해야 합니다. `~/.codex`가 아닌 홈의 카드는 제목 아래 줄에 디렉터리 이름이 붙습니다(`codex2 · Pro 5x`). 홈을 자동으로 찾지는 않습니다. 자동으로 찾으면 `auth.json` 백업 사본까지 토큰을 갱신하게 되고, 그러면 실제 로그인이 풀리기 때문입니다.
 
 ### 여러 Claude 계정
 
@@ -79,7 +82,7 @@ RUNCAT_CODEX_HOMES="~/.codex,~/.codex2" ./install.sh
 RUNCAT_CLAUDE_HOMES="~/.claude,~/.claude-sub" ./install.sh
 ```
 
-RunCat Neo에 `~/.claude-sub/runcat-usage.json`도 추가해야 하고, 카드 제목은 `Claude Code Max 20x (claude-sub)`가 됩니다. Claude Code는 이 로그인을 디렉터리 경로의 해시가 붙은 키체인 항목(`Claude Code-credentials-<16진수 8자리>`)에 저장합니다. 그래서 `CLAUDE_CONFIG_DIR`은 끝에 `/` 없이, 심링크를 거치지 않은 절대 경로여야 합니다. 그렇지 않으면 폴러가 존재하지 않는 항목을 찾게 됩니다. 기본 로그인과 마찬가지로, 그 계정을 대략 최근 1시간 안에 써서 토큰이 유효할 때만 실측값이 표시됩니다.
+RunCat Neo에 `~/.claude-sub/runcat-usage.json`도 추가해야 하고, 카드 제목은 `Claude`이고 그 아래 줄에 `claude-sub · Max 20x`가 붙습니다. Claude Code는 이 로그인을 디렉터리 경로의 해시가 붙은 키체인 항목(`Claude Code-credentials-<16진수 8자리>`)에 저장합니다. 그래서 `CLAUDE_CONFIG_DIR`은 끝에 `/` 없이, 심링크를 거치지 않은 절대 경로여야 합니다. 그렇지 않으면 폴러가 존재하지 않는 항목을 찾게 됩니다. 기본 로그인과 마찬가지로, 그 계정을 대략 최근 1시간 안에 써서 토큰이 유효할 때만 실측값이 표시됩니다.
 
 다시 설치할 때는 예전에 지정한 변수(`RUNCAT_CLAUDE_HOMES`, `RUNCAT_CODEX_HOMES`)를 모두 다시 넘기세요. `install.sh`가 에이전트를 처음부터 새로 쓰기 때문입니다.
 
@@ -104,7 +107,7 @@ RunCat Neo에 `~/.claude-sub/runcat-usage.json`도 추가해야 하고, 카드 �
 
 카드 라벨과 플랜 이름은 `runcat_poll.py`(진입점 옆의 구현 파일) 상단에 있습니다:
 
-- `STRINGS` — 언어별 표시 문자열 전체: `session` / `weekly` / `reset` 행 라벨, `left` 남은 비율 표현, 카운트다운 표현. 창(window) 식별자는 들어 있지 않으므로, 언어를 바꿔도 라벨만 바뀝니다
+- `STRINGS` — 언어별 표시 문자열 전체: `session` / `weekly` / `reset` 행 라벨, `left` 남은 비율 표현, 카운트다운과 재설정 시각(`tomorrow`, `weekdays`) 표현. 창(window) 식별자는 들어 있지 않으므로, 언어를 바꿔도 라벨만 바뀝니다
 - `CODEX_PLAN_LABELS` — Codex `plan_type`을 표시명으로 매핑 (예: `prolite → "Pro 5x"`, `pro → "Pro 20x"`)
 - Claude의 플랜(`Max 20x` 등)은 rate-limit 티어에서 자동으로 유도됩니다
 - 모델별 주간 한도는 해당 모델 이름(예: `Fable`)을 그대로 사용하므로, 플랜이 스코프하는 모델이 바뀌면 자동으로 따라갑니다
@@ -119,7 +122,7 @@ RunCat Neo에 `~/.claude-sub/runcat-usage.json`도 추가해야 하고, 카드 �
 
 - 사용된 usage 엔드포인트는 **문서화되지 않은 내부 API**입니다(공식 클라이언트가 사용). 예고 없이 바뀔 수 있고, 그러면 이 도구와 `openusage` 모두 업데이트가 필요합니다.
 - 값은 **이 맥의 토큰 기준**입니다. 다른 기기에서 쓴 사용량은 이 맥에서 다음 폴링이 성공할 때 반영됩니다.
-- 리셋까지 남은 시간은 폴링마다 갱신되는 텍스트라(최대 `RUNCAT_POLL_INTERVAL`만큼 오래됨) 실시간 카운트다운이 아닙니다. RunCat 메뉴바는 한 줄만 지원하므로 두 퍼센트는 위아래가 아니라 가로로 나란히 표시됩니다(`55% · 55%`).
+- 리셋까지 남은 시간은 폴링마다 갱신되는 텍스트라(최대 `RUNCAT_POLL_INTERVAL`만큼 오래됨) 실시간 카운트다운이 아닙니다. 그래서 재설정 행에 이 맥의 현지 시각(`14:10`, `내일 03:00`, `월 04:00`)도 함께 적습니다. 시각은 시간이 지나도 틀어지지 않습니다. RunCat 메뉴바는 한 줄만 지원하므로 두 퍼센트는 위아래가 아니라 가로로 나란히 표시됩니다(`55% · 55%`).
 
 ## 라이선스
 

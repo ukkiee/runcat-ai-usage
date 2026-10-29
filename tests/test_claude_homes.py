@@ -166,8 +166,8 @@ class TwoHomesPollTest(Patching):
     def test_only_a_home_other_than_the_default_names_itself_in_the_title(self):
         self.poll_both()
 
-        self.assertEqual(self.card(self.first)["title"], "Claude Code Max 20x")
-        self.assertEqual(self.card(self.second)["title"], "Claude Code Max 20x (claude-sub)")
+        self.assertEqual(self.card(self.first)["title"], "Claude\nMax 20x")
+        self.assertEqual(self.card(self.second)["title"], "Claude\nclaude-sub · Max 20x")
 
     def test_a_recovered_card_keeps_the_name_of_its_home(self):
         self.poll_both()
@@ -175,7 +175,7 @@ class TwoHomesPollTest(Patching):
 
         self.poll_both(now=NOW + HOUR)
 
-        self.assertEqual(self.card(self.second)["title"], "Claude Code Max 20x (claude-sub)")
+        self.assertEqual(self.card(self.second)["title"], "Claude\nclaude-sub · Max 20x")
         self.assertIn("claude (claude-sub): usage fetch failed", " ".join(self.logs))
 
 

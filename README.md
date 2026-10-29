@@ -5,18 +5,21 @@
 Show how much of your **Claude Code** and **Codex** limits is left — session / weekly / per-model limits with reset countdowns — as a [RunCat Neo](https://github.com/runcat-dev/RunCatNeo) dashboard card and menu-bar meter.
 
 ```
-Claude Code Max 20x            menu bar: 55% · 55%
+Claude                         menu bar: 55% · 55%
+ Max 20x
   Session: 55% left
   ▓▓▓▓▓░░░░░
-  reset: 1h 53m
+  reset: 1h 53m · 14:10
 
   Weekly: 55% left
   ▓▓▓▓▓░░░░░
-  reset: 4d 9h
+  reset: 4d 9h · Mon 04:00
 
   Fable: 55% left
   ▓▓▓▓▓░░░░░
-  reset: 4d 9h
+  reset: 4d 9h · Mon 04:00
+
+  Last updated: now
 ```
 
 Labels auto-switch between English and Korean based on your macOS language (see [Configuration](#configuration)).
@@ -69,7 +72,7 @@ If you keep more than one Codex login in separate homes (e.g. `CODEX_HOME=~/.cod
 RUNCAT_CODEX_HOMES="~/.codex,~/.codex2" ./install.sh
 ```
 
-Each home gets its own card beside its own `auth.json`, so add `~/.codex2/runcat-usage.json` in RunCat Neo as well. A card from any home other than `~/.codex` carries the directory name in its title (`Codex Pro 5x (codex2)`). Homes are never discovered on their own: a backup copy of `auth.json` would otherwise be refreshed and sign the real login out.
+Each home gets its own card beside its own `auth.json`, so add `~/.codex2/runcat-usage.json` in RunCat Neo as well. A card from any home other than `~/.codex` carries the directory name on the line under its title (`codex2 · Pro 5x`). Homes are never discovered on their own: a backup copy of `auth.json` would otherwise be refreshed and sign the real login out.
 
 ### Several Claude accounts
 
@@ -79,7 +82,7 @@ If you run a second Claude Code login with its own config directory (e.g. `CLAUD
 RUNCAT_CLAUDE_HOMES="~/.claude,~/.claude-sub" ./install.sh
 ```
 
-Add `~/.claude-sub/runcat-usage.json` in RunCat Neo as well; its card is titled `Claude Code Max 20x (claude-sub)`. Claude Code stores that login in a Keychain item named after a hash of the directory path (`Claude Code-credentials-<8 hex>`), so `CLAUDE_CONFIG_DIR` must be the plain absolute path: no trailing slash, and not reached through a symlink, or the poller looks for an item that does not exist. As with the default login, the card stays live only while that login's token is valid, which means using that account within roughly the last hour.
+Add `~/.claude-sub/runcat-usage.json` in RunCat Neo as well; its card is titled `Claude` with `claude-sub · Max 20x` on the line under it. Claude Code stores that login in a Keychain item named after a hash of the directory path (`Claude Code-credentials-<8 hex>`), so `CLAUDE_CONFIG_DIR` must be the plain absolute path: no trailing slash, and not reached through a symlink, or the poller looks for an item that does not exist. As with the default login, the card stays live only while that login's token is valid, which means using that account within roughly the last hour.
 
 When you reinstall, pass every variable you set before (`RUNCAT_CLAUDE_HOMES`, `RUNCAT_CODEX_HOMES`) again, since `install.sh` rewrites the agent from scratch.
 
@@ -104,7 +107,7 @@ Environment variables (export `RUNCAT_CLAUDE_HOMES` / `RUNCAT_CODEX_HOMES` / `RU
 
 Card labels and plan names live at the top of `runcat_poll.py` (the implementation beside the entry point):
 
-- `STRINGS` — every display string per language: the `session` / `weekly` / `reset` row labels, the `left` share wording and the countdown wording. It holds no window identities, so translating a card changes labels only.
+- `STRINGS` — every display string per language: the `session` / `weekly` / `reset` row labels, the `left` share wording, and the countdown and reset-time wording (`tomorrow`, `weekdays`). It holds no window identities, so translating a card changes labels only.
 - `CODEX_PLAN_LABELS` — maps Codex `plan_type` to a display name (e.g. `prolite → "Pro 5x"`, `pro → "Pro 20x"`).
 - Claude's plan (`Max 20x`, …) is derived automatically from its rate-limit tier.
 - The per-model weekly cap uses the model's own name (e.g. `Fable`), so it follows whatever model your plan currently scopes.
@@ -119,7 +122,7 @@ Card labels and plan names live at the top of `runcat_poll.py` (the implementati
 
 - The usage endpoints are **undocumented/internal** (used by the official clients). They can change without notice, in which case this tool — and `openusage` — would need updating.
 - Values reflect **this machine's** tokens. Usage from another device is picked up on the next successful poll here.
-- Reset countdowns are text refreshed every poll (up to `RUNCAT_POLL_INTERVAL` stale), not a live-ticking timer. RunCat's menu bar is a single line, so the two menu-bar percentages are shown side by side (`55% · 55%`), not stacked.
+- Reset countdowns are text refreshed every poll (up to `RUNCAT_POLL_INTERVAL` stale), not a live-ticking timer, so each reset line also states the local time it falls at (`14:10`, `tomorrow 03:00`, `Mon 04:00`), which never goes stale. RunCat's menu bar is a single line, so the two menu-bar percentages are shown side by side (`55% · 55%`), not stacked.
 
 ## License
 

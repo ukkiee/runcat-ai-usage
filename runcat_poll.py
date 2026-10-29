@@ -11,12 +11,14 @@ cost) to write real, account-wide rate-limit numbers into the RunCat Neo Cards.
 Designed to run on a launchd interval (every ~5 min).
 
 Card shape:
-- title carries the plan, e.g. "Claude Code Max 20x" / "Codex Pro Lite", plus the
-  home it came from for any home other than the default one
-  ("Codex Pro 5x (codex2)", "Claude Code Max 20x (claude-sub)").
+- title is the Provider's name, with a second line under it naming the home
+  (for any home other than the default one) and the plan:
+  "Claude" / "claude-sub · Max 20x", "Codex" / "Pro 20x".
 - each rate-limit window is two rows: the share still left (with the bar) and,
-  underneath it, a bar-less "reset in <time>" line so the countdown isn't cramped
-  next to the percentage. Windows are "Session" (5h) and "Weekly" (7d).
+  underneath it, a bar-less reset line carrying both the countdown and the local
+  wall-clock moment ("16분 후 · 12:10", "3일 16시간 후 · 월 04:00"), so the
+  countdown isn't cramped next to the percentage. Windows are "Session" (5h) and
+  "Weekly" (7d).
 
 Every Codex home named in RUNCAT_CODEX_HOMES (comma-separated, default ~/.codex)
 is its own account and gets its own Card beside its own auth.json. Claude works
@@ -107,7 +109,10 @@ STRINGS = {
         "hours": "{hours}시간 {minutes}분",
         "minutes": "{minutes}분",
         "moment": "1분 미만",
-        "countdown": "{duration} 후",
+        "countdown": "{duration} 후 · {when}",
+        "tomorrow": "내일 {time}",
+        "weekday": "{day} {time}",
+        "weekdays": "월 화 수 목 금 토 일",
     },
     "en": {
         "session": "Session",
@@ -118,7 +123,10 @@ STRINGS = {
         "hours": "{hours}h {minutes}m",
         "minutes": "{minutes}m",
         "moment": "<1m",
-        "countdown": "{duration}",
+        "countdown": "{duration} · {when}",
+        "tomorrow": "tomorrow {time}",
+        "weekday": "{day} {time}",
+        "weekdays": "Mon Tue Wed Thu Fri Sat Sun",
     },
 }
 
@@ -457,7 +465,7 @@ def epoch_to_iso(epoch):
 # ------------------------------- Card -------------------------------
 
 CARD_HEADINGS = {
-    "claude": {"name": "Claude Code", "symbol": "staroflife"},
+    "claude": {"name": "Claude", "symbol": "staroflife"},
     "codex": {"name": "Codex", "symbol": "camera.aperture"},
 }
 
@@ -477,6 +485,29 @@ def fmt_duration(seconds, labels):
     return labels["moment"]
 
 
+def local_time(epoch):
+    """An epoch as this Mac's wall clock. fromtimestamp applies the zone's rules
+    at that moment, so a Reset on the far side of a DST change still reads right."""
+    return datetime.fromtimestamp(epoch)
+
+
+def fmt_when(resets_at, labels, now):
+    """When a Reset happens on the local clock: '12:10' today, '내일 03:00'
+    tomorrow, '월 04:00' further out. A weekday is enough because no Window is
+    longer than a week, and the countdown beside it says which week.
+
+    The countdown is worked out once per poll and then sits on the Card until the
+    next one, so it can be a full poll interval behind. The moment never drifts."""
+    moment = local_time(resets_at)
+    clock = moment.strftime("%H:%M")
+    days = (moment.date() - local_time(now).date()).days
+    if days <= 0:
+        return clock
+    if days == 1:
+        return labels["tomorrow"].format(time=clock)
+    return labels["weekday"].format(day=labels["weekdays"].split()[moment.weekday()], time=clock)
+
+
 def window_title(window, labels):
     """What the Card calls a Window: the label set names the ones every Provider
     has, and a Model-Scoped Window carries the model's own name instead."""
@@ -490,7 +521,8 @@ def left_share(used):
 
 
 def window_rows(title, used, resets_at_epoch, labels, now):
-    """A window's share-left row (with bar) plus a bar-less 'reset in <time>' row.
+    """A window's share-left row (with bar) plus a bar-less reset row that states
+    both how long until the Reset and when it falls on the local clock.
 
     The Reading keeps the used share; only the Card turns it around, so a Stale
     Reading written before the Card showed what is left still renders correctly.
@@ -505,23 +537,27 @@ def window_rows(title, used, resets_at_epoch, labels, now):
              "normalizedValue": round(left / 100, 4)}]
     if isinstance(resets_at_epoch, (int, float)) and resets_at_epoch - now > 0:
         dur = fmt_duration(resets_at_epoch - now, labels)
+        when = fmt_when(resets_at_epoch, labels, now)
         rows.append({"title": labels["reset"],
-                     "formattedValue": labels["countdown"].format(duration=dur)})
+                     "formattedValue": labels["countdown"].format(duration=dur, when=when)})
     return rows
 
 
 def join_blocks(blocks):
-    """Concatenate per-window row groups, inserting a blank line between groups.
-    RunCat has no spacer row, so we append a trailing newline to the previous
-    group's last value — the spacing rides on a row's value, never on its title,
-    and rendering a Card is the only thing that knows that."""
+    """Concatenate per-window row groups with a blank line after each one, so the
+    Windows stand apart from each other and the last one stands apart from the
+    'last updated' line RunCat Neo draws under the rows. RunCat has no spacer row,
+    so the blank line is a trailing newline on a group's last value — the spacing
+    rides on a row's value, never on its title, and rendering a Card is the only
+    thing that knows that. A group with no rows takes no spacer."""
     metrics = []
-    for i, rows in enumerate(blocks):
-        if i > 0 and metrics:
-            last = dict(metrics[-1])
-            last["formattedValue"] = last["formattedValue"] + "\n"
-            metrics[-1] = last
-        metrics.extend(rows)
+    for rows in blocks:
+        if not rows:
+            continue
+        last = dict(rows[-1])
+        last["formattedValue"] = last["formattedValue"] + "\n"
+        metrics.extend(rows[:-1])
+        metrics.append(last)
     return metrics
 
 
@@ -534,11 +570,15 @@ def bar_two(*used):
 
 
 def card_title(provider, plan, account=""):
-    """'Claude Code' plus the Plan, e.g. 'Claude Code Max 20x', and the account's
-    name when the Provider has more than the one default login, e.g.
-    'Codex Pro 5x (codex2)'."""
-    title = (CARD_HEADINGS[provider]["name"] + " " + plan).strip()
-    return f"{title} ({account})" if account else title
+    """The Provider's name, with a second line under it naming the account and
+    the Plan: 'Claude' / 'claude-sub · Max 20x'. The default login has no
+    account name, so its second line is the Plan alone.
+
+    RunCat's title is one plain string with no styling, so the second line
+    cannot be set smaller or grey."""
+    caption = " · ".join(part for part in (account, plan) if part)
+    name = CARD_HEADINGS[provider]["name"]
+    return f"{name}\n{caption}" if caption else name
 
 
 def finalize(title, symbol, metrics, bar_value, now):
@@ -567,14 +607,10 @@ def render_card(reading, labels, now, account=""):
     from where the Reading was read, never from the Reading, so it is handed in
     the same way the clock is.
     """
-    blocks = []
-    for window in reading.windows:
-        rows = window_rows(window_title(window, labels), window.used, window.resets_at, labels, now)
-        if rows:
-            # A Window that renders nothing must not reach join_blocks: it would
-            # still take the spacer, hanging a blank line off the Card's last row.
-            blocks.append(rows)
-    metrics = join_blocks(blocks)
+    metrics = join_blocks(
+        window_rows(window_title(window, labels), window.used, window.resets_at, labels, now)
+        for window in reading.windows
+    )
     if not metrics:
         return None
     shares = {window.id: window.used for window in reading.windows}

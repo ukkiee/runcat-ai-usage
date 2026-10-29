@@ -40,11 +40,11 @@ RESPONSE = {
 }
 
 LIVE_CARD = {
-    "title": "Codex Pro 5x",
+    "title": "Codex\nPro 5x",
     "symbol": "camera.aperture",
     "metrics": [
         {"title": "주간 한도", "formattedValue": "87% 남음", "normalizedValue": 0.87},
-        {"title": "재설정", "formattedValue": "5일 12시간 후"},
+        {"title": "재설정", "formattedValue": "5일 12시간 후 · 수 09:06\n"},
     ],
     "lastUpdatedDate": "2026-07-23T11:26:40Z",
     "metricsBarValue": "87%",
@@ -220,16 +220,16 @@ class CodexCardTest(CodexCase):
 
         self.poll()
 
-        self.assertEqual(self.rows(), [("Weekly", "87% left"), ("reset", "5d 12h")])
+        self.assertEqual(self.rows(), [("Weekly", "87% left"), ("reset", "5d 12h · Wed 09:06\n")])
 
     def test_two_windows_are_spaced_apart_the_way_claudes_are(self):
         self.poll(both_windows())
 
         self.assertEqual(self.rows(), [
             ("현재 세션", "53% 남음"),
-            ("재설정", "2시간 0분 후\n"),
+            ("재설정", "2시간 0분 후 · 22:26\n"),
             ("주간 한도", "87% 남음"),
-            ("재설정", "5일 12시간 후"),
+            ("재설정", "5일 12시간 후 · 수 09:06\n"),
         ])
 
     def test_the_menu_bar_carries_the_session_and_weekly_windows(self):
@@ -254,7 +254,7 @@ class CodexRecoveryTest(CodexCase):
         self.assertEqual(self.rows(), [
             ("현재 세션", "100% 남음\n"),
             ("주간 한도", "87% 남음"),
-            ("재설정", "5일 9시간 후"),
+            ("재설정", "5일 9시간 후 · 수 09:06\n"),
         ])
 
     def test_recovery_still_works_after_the_interface_language_changes(self):

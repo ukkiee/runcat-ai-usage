@@ -43,15 +43,15 @@ LIVE_RESPONSE = {
 }
 
 LIVE_CARD = {
-    "title": "Claude Code Max 20x",
+    "title": "Claude\nMax 20x",
     "symbol": "staroflife",
     "metrics": [
         {"title": "현재 세션", "formattedValue": "53% 남음", "normalizedValue": 0.53},
-        {"title": "재설정", "formattedValue": "2시간 2분 후\n"},
+        {"title": "재설정", "formattedValue": "2시간 2분 후 · 19:20\n"},
         {"title": "주간 한도", "formattedValue": "23% 남음", "normalizedValue": 0.23},
-        {"title": "재설정", "formattedValue": "3일 10시간 후\n"},
+        {"title": "재설정", "formattedValue": "3일 10시간 후 · 월 04:00\n"},
         {"title": "Fable", "formattedValue": "34% 남음", "normalizedValue": 0.34},
-        {"title": "재설정", "formattedValue": "3일 10시간 후"},
+        {"title": "재설정", "formattedValue": "3일 10시간 후 · 월 03:59\n"},
     ],
     "lastUpdatedDate": "2026-07-23T08:17:25Z",
     "metricsBarValue": "53% · 23%",
@@ -331,9 +331,9 @@ class ClaudeCardTest(ReadingCase):
 
         self.assertEqual(
             [(row["title"], row["formattedValue"]) for row in card["metrics"]],
-            [("Session", "53% left"), ("reset", "2h 2m\n"),
-             ("Weekly", "23% left"), ("reset", "3d 10h\n"),
-             ("Fable", "34% left"), ("reset", "3d 10h")],
+            [("Session", "53% left"), ("reset", "2h 2m · 19:20\n"),
+             ("Weekly", "23% left"), ("reset", "3d 10h · Mon 04:00\n"),
+             ("Fable", "34% left"), ("reset", "3d 10h · Mon 03:59\n")],
         )
 
     def test_the_language_moves_the_labels_and_nothing_else(self):
@@ -356,12 +356,14 @@ class ClaudeCardTest(ReadingCase):
                 )
                 self.assertEqual([row["title"] for row in card["metrics"]], expected)
 
-    def test_windows_are_spaced_apart_and_the_last_one_is_not(self):
+    def test_every_window_is_followed_by_one_blank_line(self):
+        """The last one too: RunCat draws its 'last updated' line right under the
+        rows, and without the gap it reads as part of the last Window."""
         metrics = self.render()["metrics"]
 
-        self.assertTrue(metrics[1]["formattedValue"].endswith("\n"))
-        self.assertTrue(metrics[3]["formattedValue"].endswith("\n"))
-        self.assertFalse(metrics[5]["formattedValue"].endswith("\n"))
+        for row in (metrics[1], metrics[3], metrics[5]):
+            self.assertTrue(row["formattedValue"].endswith("\n"))
+            self.assertFalse(row["formattedValue"].endswith("\n\n"))
 
     def test_the_menu_bar_carries_the_session_and_weekly_windows(self):
         self.assertEqual(self.render()["metricsBarValue"], "53% · 23%")
@@ -400,15 +402,16 @@ class ClaudeCardTest(ReadingCase):
         card = self.render(now=later)
 
         self.assertEqual(card["lastUpdatedDate"], "2026-07-23T09:17:25Z")
-        self.assertEqual(card["metrics"][1]["formattedValue"], "1시간 2분 후\n")
+        self.assertEqual(card["metrics"][1]["formattedValue"], "1시간 2분 후 · 19:20\n")
 
     def test_a_reading_with_no_windows_renders_nothing_to_publish(self):
         """Nothing to render means the last-good Card stands, not an empty one."""
         self.assertIsNone(mod.render_card(self.reading({"limits": []}), mod.label_set("ko"), NOW))
 
     def test_a_window_that_renders_nothing_leaves_no_stray_spacing(self):
-        """The spacer is smuggled into the previous row's value, so a Window that
-        renders no rows would still hang a blank line off the Card's last row."""
+        """The spacer is smuggled into a row's value, so a Window that renders no
+        rows must not take one of its own and stack a second blank line under the
+        Card's last row."""
         reading = mod.UsageReading(
             provider="claude", plan="Max 20x", captured_at=NOW,
             windows=(mod.Window(id=mod.SESSION_WINDOW, used=47.0, resets_at=SESSION_RESET),
@@ -418,7 +421,7 @@ class ClaudeCardTest(ReadingCase):
         card = mod.render_card(reading, mod.label_set("ko"), NOW)
 
         self.assertEqual([row["title"] for row in card["metrics"]], ["현재 세션", "재설정"])
-        self.assertFalse(card["metrics"][-1]["formattedValue"].endswith("\n"))
+        self.assertFalse(card["metrics"][-1]["formattedValue"].endswith("\n\n"))
 
 
 class InterfaceLanguageTest(ReadingCase):
@@ -467,6 +470,46 @@ class InterfaceLanguageTest(ReadingCase):
 
     def test_every_language_carries_the_same_display_strings(self):
         self.assertEqual(set(mod.STRINGS["ko"]), set(mod.STRINGS["en"]))
+
+
+
+class CardTitleTest(unittest.TestCase):
+    def test_the_second_line_names_the_account_and_the_plan(self):
+        self.assertEqual(mod.card_title("codex", "Business", "codex-work"),
+                         "Codex\ncodex-work · Business")
+
+    def test_the_default_login_shows_the_plan_alone(self):
+        self.assertEqual(mod.card_title("claude", "Max 20x"), "Claude\nMax 20x")
+
+    def test_nothing_to_caption_leaves_the_name_alone(self):
+        self.assertEqual(mod.card_title("claude", ""), "Claude")
+
+
+class ResetMomentTest(unittest.TestCase):
+    """A Reset on the local clock. NOW is Thursday 17:17 in the zone the tests
+    package pins (Asia/Seoul)."""
+
+    def when(self, offset, lang="ko"):
+        return mod.fmt_when(NOW + offset, mod.label_set(lang), NOW)
+
+    def test_later_today_reads_as_the_time_alone(self):
+        self.assertEqual(self.when(5 * 3600), "22:17")
+
+    def test_tomorrow_is_named_by_the_date_not_by_24_hours(self):
+        """01:17 is only 8 hours off but already tomorrow; 23:17 the next day is
+        30 hours off and still tomorrow."""
+        self.assertEqual(self.when(8 * 3600), "내일 01:17")
+        self.assertEqual(self.when(30 * 3600), "내일 23:17")
+
+    def test_further_out_reads_as_the_weekday(self):
+        self.assertEqual(self.when(3 * 86400), "일 17:17")
+        self.assertEqual(self.when(3 * 86400, "en"), "Sun 17:17")
+        self.assertEqual(self.when(8 * 3600, "en"), "tomorrow 01:17")
+
+    def test_a_full_week_out_names_the_same_weekday_as_today(self):
+        """No Window is longer than a week, so this is the one repeat a weekday
+        can have, and the countdown beside it ('7일') says which one it is."""
+        self.assertEqual(self.when(7 * 86400), "목 17:17")
 
 
 if __name__ == "__main__":

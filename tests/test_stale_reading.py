@@ -298,9 +298,9 @@ class LegacyShapeTest(StaleReadingCase):
 
         self.assertEqual(self.rows(), [
             ("현재 세션", "53% 남음"),
-            ("재설정", "2시간 2분 후\n"),
+            ("재설정", "2시간 2분 후 · 19:20\n"),
             ("주간 한도", "23% 남음"),
-            ("재설정", "3일 10시간 후"),
+            ("재설정", "3일 10시간 후 · 월 04:00\n"),
         ])
 
     def test_a_share_that_contradicts_the_scale_leaves_the_previous_reading_standing(self):
@@ -336,9 +336,9 @@ class RecoveryTest(StaleReadingCase):
             # The decayed Window loses its countdown and takes over the spacer.
             ("현재 세션", "100% 남음\n"),
             ("주간 한도", "23% 남음"),
-            ("재설정", "3일 7시간 후\n"),
+            ("재설정", "3일 7시간 후 · 월 04:00\n"),
             ("Fable", "34% 남음"),
-            ("재설정", "3일 7시간 후"),
+            ("재설정", "3일 7시간 후 · 월 03:59\n"),
         ])
 
     def test_the_spacing_survives_however_many_failed_polls_follow(self):
@@ -369,7 +369,7 @@ class RecoveryTest(StaleReadingCase):
 
         self.poll(http_fails=True, now=NOW + HOUR)
 
-        self.assertEqual(self.rows()[1], ("재설정", "1시간 2분 후\n"))
+        self.assertEqual(self.rows()[1], ("재설정", "1시간 2분 후 · 19:20\n"))
 
     def test_an_expired_token_recovers_the_same_way_an_unreachable_endpoint_does(self):
         self.poll()

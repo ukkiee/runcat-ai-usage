@@ -128,8 +128,8 @@ class TwoHomesPollTest(unittest.TestCase):
     def test_only_a_home_other_than_the_default_names_itself_in_the_title(self):
         self.poll_both()
 
-        self.assertEqual(self.card(self.first)["title"], "Codex Pro 5x")
-        self.assertEqual(self.card(self.second)["title"], "Codex Pro 5x (codex2)")
+        self.assertEqual(self.card(self.first)["title"], "Codex\nPro 5x")
+        self.assertEqual(self.card(self.second)["title"], "Codex\ncodex2 · Pro 5x")
 
     def test_each_home_keeps_its_own_reading(self):
         self.poll_both()
@@ -144,7 +144,7 @@ class TwoHomesPollTest(unittest.TestCase):
 
         self.poll_both(now=NOW + 3 * HOUR)
 
-        self.assertEqual(self.card(self.second)["title"], "Codex Pro 5x (codex2)")
+        self.assertEqual(self.card(self.second)["title"], "Codex\ncodex2 · Pro 5x")
         self.assertIn("codex (codex2): usage fetch failed", " ".join(self.logs))
 
 
